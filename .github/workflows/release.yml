@@ -51,7 +51,7 @@ jobs:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     env:
-      BIN: rsml-cli
+      BIN: rsml-lsp
     steps:
       - uses: actions/checkout@v4
         with:
