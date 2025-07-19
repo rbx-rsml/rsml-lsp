@@ -1,0 +1,68 @@
+{
+    "name": "roblox-style-management-language",
+    "displayName": "RSML LSP",
+    "publisher": "rbx-rsml",
+    "description": "LSP and syntax highlighter for RSML (Roblox Style Management Language).",
+    "icon": "icon.png",
+    "version": "0.1.0",
+    "engines": {
+        "vscode": "^1.94.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "main": "./out/extension.js",
+    "repository": "https://github.com/rsmlang/rsml-vsc-ext",
+    "contributes": {
+        "languages": [
+            {
+                "id": "rsml",
+                "aliases": ["RSML", "rsml"],
+                "icon": {
+                    "light": "icon.png",
+                    "dark": "icon.png"
+                },
+                "extensions": [".rsml"],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "rsml",
+                "scopeName": "source.rsml",
+                "path": "./syntaxes/rsml.tmLanguage.json"
+            },
+            {
+                "path": "./syntaxes/rsml-luau.tmLanguage.json",
+                "scopeName": "rsml.luau",
+                "injectTo": ["source.luau"],
+                "embeddedLanguages": {
+                    "meta.embedded.rsml": "rsml"
+                }
+            },
+            {
+                "path": "./syntaxes/rsml-ts.tmLanguage.json",
+                "scopeName": "rsml.ts",
+                "injectTo": ["source.ts"],
+                "embeddedLanguages": {
+                    "meta.embedded.rsml": "rsml"
+                }
+            }
+        ],
+        "semanticTokenScopes": [
+            {
+                "scopes": {
+                    "templateType": ["entity.name.selector"]
+                }
+            }
+        ]
+    },
+    "dependencies": {
+        "@types/node": "^24.0.12",
+        "net": "^1.0.2",
+        "vscode-languageclient": "^9.0.1"
+    },
+    "devDependencies": {
+        "vscode": "^1.1.37"
+    }
+}

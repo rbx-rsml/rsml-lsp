@@ -1,0 +1,13 @@
+# Rust
+/target
+
+# VSCode Extension
+/extensions/vscode/node_modules
+/extensions/vscode/out
+
+# Macos Junk
+._*
+.DS_STORE
+
+# Test
+**/*.rsml

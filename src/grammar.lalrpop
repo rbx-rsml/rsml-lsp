@@ -1,0 +1,291 @@
+use lalrpop_util::{ErrorRecovery, ParseError};
+use std::str::FromStr;
+
+use crate::lexer::{LexicalError, Token, Expr};
+
+grammar<'err>(errors: &'err mut Vec<ErrorRecovery<usize, Token, LexicalError>>);
+
+extern {
+    type Location = usize;
+    type Error = LexicalError;
+
+    enum crate::lexer::Token {
+        "block comment" => Token::CommentMulti(_),
+        "comment" => Token::CommentSingle,
+
+        "identifier" => Token::Identifier,
+        "token" => Token::TokenIdentifier,
+        "static token" => Token::StaticTokenIdentifier,
+        "static argument" => Token::StaticArgumentIdentifier,
+        "macro identifier" => Token::MacroIdentifier,
+
+        "@macro" => Token::MacroDeclaration,
+
+        "@priority" => Token::PriorityDeclaration,
+
+        "{" => Token::ScopeOpen,
+        "}" => Token::ScopeClose,
+
+        "(" => Token::ParensOpen,
+        ")" => Token::ParensClose,
+
+        "," => Token::Comma,
+        ";" => Token::SemiColon,
+
+        "." => Token::Dot,
+        ":" => Token::Colon,
+
+        "=" => Token::Equals,
+
+        "tag selector / enum part" => Token::TagSelectorOrEnumPart,
+        "name selector" => Token::NameSelector,
+        "psuedo selector" => Token::PsuedoSelector,
+        "state selector / enum part" => Token::StateSelectorOrEnumPart,
+        ">" => Token::ChildrenSelector,
+        ">>" => Token::DescendantsSelector,
+
+        "%" => Token::OpMod,
+        "/" => Token::OpDiv,
+        "//" => Token::OpFloorDiv,
+        "^" => Token::OpPow,
+        "*" => Token::OpMult,
+        "+" => Token::OpAdd,
+        "-" => Token::OpSub,
+
+        "number" => Token::Number,
+        "number scale" => Token::NumberScale,
+        "number offset" => Token::NumberOffset,
+
+        "block string" => Token::StringMulti(_),
+        "string" => Token::StringSingle,
+
+        "tailwind color code" => Token::ColorTailwind,
+        "brick color code" => Token::ColorBrick,
+        "css color code" => Token::ColorCss,
+        "hex color code" => Token::ColorHex,
+
+        "enum keyword" => Token::EnumKeyword,
+
+        "roblox asset url" => Token::RbxAsset,
+        "roblox content url" => Token::RbxContent,
+
+        "error" => Token::Error,
+    }    
+}
+
+pub Rsml: Vec<Token> = {
+    Term*,
+    ! => { errors.push(<>); vec![Token::Error] }
+};
+
+Term: Token = {
+    TermNoMacroDeclaration,
+    MacroDeclaration
+}
+
+TermNoMacroDeclaration: Token = {
+    TermNoMacroOrRuleScopeDeclaration,
+    ScopeRuleDeclaration,
+}
+
+TermNoMacroOrRuleScopeDeclaration: Token = {
+    StaticTokenAssignment,
+    TokenAssignment,
+    Comment,
+    //MacroCall,
+}
+
+Delimiter: Token = {
+    "," => Token::Comma,
+    ";" => Token::SemiColon
+};
+
+Divider: Token = {
+    "." => Token::Dot,
+    ":" => Token::Colon
+};
+
+MacroDeclaration: Token = {
+    "@macro" "identifier" <args:MacroDeclarationArgs?> "{" <body:MacroDeclarationBody?> "}" =>
+        Token::Expr(Expr::MacroDefinition),
+};
+
+MacroDeclarationArgs = {
+    "(" List<"static argument", Delimiter> ")",
+};
+
+MacroDeclarationBody: Vec<Token> = {
+    TermNoMacroDeclaration+,
+    <dt:Datatype> => vec![dt]
+}
+
+MacroCallBody: Vec<Token> = {
+    TermNoMacroOrRuleScopeDeclaration+,
+    <token:UnambiguousScopeRuleDeclaration> => vec![token],
+    <dt:Datatype> => vec![dt]
+}
+
+MacroCall: Token = {
+    <name:"macro identifier"> "(" <items:List<MacroCallBody?, ",">> ")" =>? {
+        Err(ParseError::User { error: LexicalError::Ignore })
+    }
+        //Token::Expr(Expr::MacroCall((Box::new(name), Box::new(items)))),
+}
+
+PriorityDeclaration: Token = {
+    "@priority" <number:Number> ";" => Token::Expr(Expr::PriorityDefinition),
+}
+
+PropertyAssignment: Token = {
+    "identifier" "=" Datatype? ";" => Token::Expr(Expr::PropertyAssignment),
+}
+
+StaticTokenAssignment: Token = {
+    "static token" "=" Datatype? ";" => Token::Expr(Expr::PropertyAssignment),
+}
+
+TokenAssignment: Token = {
+    "token" "=" Datatype? ";" => Token::Expr(Expr::PropertyAssignment),
+}
+
+UnambiguousSelector = {
+    "identifier",
+    "tag selector / enum part",
+    "name selector",
+    "psuedo selector",
+    ">",
+    ">>"
+}
+
+Selector = {
+    UnambiguousSelector,
+    "state selector / enum part"
+}
+
+ScopeRuleBody = {
+    PropertyAssignment,
+    TermNoMacroDeclaration
+}
+
+ScopeRuleDeclaration: Token = {
+    <selectors:List<Selector*, ",">> "{" <body:ScopeRuleBody*> "}" =>
+        Token::Expr(Expr::ScopeRuleDeclaration((selectors, body))),
+}
+
+UnambiguousScopeRuleDeclaration: Token = {
+     <selectors:List<UnambiguousSelector+, ",">> "{" <body:ScopeRuleBody*> "}" =>
+        Token::Expr(Expr::ScopeRuleDeclaration((selectors, body))),
+
+    <selectors:"state selector / enum part"> "{" <body:ScopeRuleBody*> "}" =>
+        Token::Expr(Expr::ScopeRuleDeclaration((vec![vec![selectors]], body))),
+}
+
+Datatype: Token = {
+    #[precedence(level="0")]
+    String,
+    Number,
+    Color,
+    Enum,
+    EnumShorthand,
+    AssetUrl,
+    ContentUrl,
+    Tuple,
+
+    #[precedence(level="1")] #[assoc(side="left")]
+    <l:Datatype> "%" <r:Datatype> => Token::Expr(Expr::Operation((Box::new(l), Box::new(Token::OpMod), Box::new(r)))),
+    <l:Datatype> "/" <r:Datatype> => Token::Expr(Expr::Operation((Box::new(l), Box::new(Token::OpDiv), Box::new(r)))),
+    <l:Datatype> "//" <r:Datatype> => Token::Expr(Expr::Operation((Box::new(l), Box::new(Token::OpFloorDiv), Box::new(r)))),
+    <l:Datatype> "^" <r:Datatype> => Token::Expr(Expr::Operation((Box::new(l), Box::new(Token::OpPow), Box::new(r)))),
+    <l:Datatype> "*" <r:Datatype> => Token::Expr(Expr::Operation((Box::new(l), Box::new(Token::OpMult), Box::new(r)))),
+    #[precedence(level="2")] #[assoc(side="left")]
+    <l:Datatype> "+" <r:Datatype> => Token::Expr(Expr::Operation((Box::new(l), Box::new(Token::OpAdd), Box::new(r)))),
+    <l:Datatype> "-" <r:Datatype> => Token::Expr(Expr::Operation((Box::new(l), Box::new(Token::OpSub), Box::new(r)))),
+}
+
+String: Token = {
+    <start: @L> <string:"block string"> <end: @R> =>? {
+        if let Token::StringMulti(Err(nestedness)) = string {
+            Err(ParseError::UnrecognizedToken {
+                token: (start, Token::Error, end),
+                expected: vec![ format!("\"]{}]\"", "=".repeat(nestedness)) ]
+            })
+
+        } else {
+            Ok(string)
+        }
+    },
+
+    "string"
+}
+
+Number = {
+    "number",
+    "number scale",
+    "number offset"
+}
+
+Color = {
+    "tailwind color code",
+    "brick color code",
+    "css color code",
+    "hex color code"
+}
+
+EnumPart: Token = {
+    Divider <name:"identifier"> => name,
+    <name:"state selector / enum part"> => name,
+    <name:"tag selector / enum part"> => name
+}
+
+Enum: Token = {
+    "enum keyword" <name:EnumPart> <item:EnumPart> =>
+        Token::Expr(Expr::Enum((Box::new(name), Box::new(item)))),
+}
+
+EnumShorthand: Token = {
+    ":" <item:"identifier"> => Token::Expr(Expr::EnumShorthand(Box::new(item))),
+
+    <item:"state selector / enum part"> => Token::Expr(Expr::EnumShorthand(Box::new(item)))
+}
+
+AssetUrl: Token = {
+    <asset_url:"roblox asset url"> => Token::Expr(Expr::AssetUrl(Box::new(asset_url))),
+}
+
+ContentUrl: Token = {
+    <content_url:"roblox content url"> => Token::Expr(Expr::ContentUrl(Box::new(content_url))),
+}
+
+Tuple: Token = {
+    <name:"identifier"> "(" <items:List<Datatype, Delimiter>> ")" => Token::Expr(Expr::Tuple((Some(Box::new(name)), Box::new(items)))),
+    "(" <items:List<Datatype, Delimiter>> ")" => Token::Expr(Expr::Tuple((None, Box::new(items))))
+}
+
+List<T, D>: Vec<T> = {
+    <mut v:(<T> D)*> <e:T> => {
+        v.push(e);
+        v
+    }
+};
+
+
+Comment: Token = {
+    <start: @L> <comment:"block comment"> <end: @R> =>? {
+        if let Token::CommentMulti(Err(nestedness)) = comment {
+            errors.push(ErrorRecovery {
+                error: ParseError::UnrecognizedToken {
+                    token: (start, Token::Error, end),
+                    expected: vec![ format!("\"]{}]\"", "=".repeat(nestedness)) ]
+                },
+                dropped_tokens: vec![]
+            });
+
+            Err(ParseError::User { error: LexicalError::Ignore })
+            
+        } else {
+            Err(ParseError::User { error: LexicalError::Ignore })
+        }
+    },
+
+    "comment"
+}
