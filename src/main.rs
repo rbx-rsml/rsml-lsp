@@ -320,16 +320,16 @@ async fn main() {
 }
 
 
-fn test() {
-    let parser = RsmlParser::new();
+//fn test() {
+    //let parser = RsmlParser::new();
 
     // The included .rsml file below is git-ignored, so you may need to create one yourself.
-    let lexer = Lexer::new(include_str!("../test.rsml"));
-    let mut errors = vec![];
-    let parsed = parser.parse(&mut errors, lexer);
+    //let lexer = Lexer::new(include_str!("../test.rsml"));
+    //let mut errors = vec![];
+    //let parsed = parser.parse(&mut errors, lexer);
 
     //println!("{:#?}", lexer.collect::<Vec<Result<(usize, lexer::Token, usize), LexicalError>>>());
-    println!("{:#?} {:#?}", parsed, errors);
-}
+    //println!("{:#?} {:#?}", parsed, errors);
+//}
 
 
