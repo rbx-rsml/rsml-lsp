@@ -47,8 +47,8 @@ jobs:
       - name: Remove Redundant Files
         run: |
           cd extensions/vscode
-          [ -f src ] && rm -r src
-          [ -f node_modules ] && rm -r node_modules
+          [ -d src ] && rm -r src
+          [ -d node_modules ] && rm -r node_modules
           [ -f bun.lock ] && rm -r bun.lock
           [ -f bun.lockb ] && rm -r bun.lockb
           [ -f tsconfig.json ] && rm -r tsconfig.json
