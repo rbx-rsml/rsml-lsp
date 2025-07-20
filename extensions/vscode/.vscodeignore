@@ -1,5 +1,6 @@
 .gitignore
-/src
-/node_modules
-/tsconfig.json
-/bun.lock
+src
+node_modules
+tsconfig.json
+bun.lockb
+bun.lock

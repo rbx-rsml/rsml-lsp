@@ -47,10 +47,11 @@ jobs:
       - name: Remove Redundant Files
         run: |
           cd extensions/vscode
-          rm -r src
-          rm -r node_modules
-          rm -r bun.lock
-          rm -r tsconfig.json
+          [ -f src ] && rm -r src
+          [ -f node_modules ] && rm -r node_modules
+          [ -f bun.lock ] && rm -r bun.lock
+          [ -f bun.lockb ] && rm -r bun.lockb
+          [ -f tsconfig.json ] && rm -r tsconfig.json
 
       - name: Download LSP Artifacts
         uses: actions/download-artifact@v4
