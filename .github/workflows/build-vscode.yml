@@ -51,7 +51,6 @@ jobs:
           rm -r node_modules
           rm -r bun.lock
           rm -r tsconfig.json
-          rm -r .vscodeignore
 
       - name: Download LSP Artifacts
         uses: actions/download-artifact@v4
