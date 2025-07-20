@@ -67,21 +67,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target.zip
+            target
           key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Extract target.zip
-        shell: bash
-        run: |
-          if [ -f target.zip ]; then
-            if [ "${{ matrix.host }}" = "windows" ]; then
-              7z x target.zip
-            else
-              unzip target.zip
-            fi
-          else
-            echo "target.zip not found, skipping extraction."
-          fi
         
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -90,19 +77,6 @@ jobs:
 
       - name: Build Release
         run: cargo build --release --locked --verbose --target ${{ matrix.target }}
-        env:
-          # Build into a known directory so we can find our build artifact more
-          # easily.
-          CARGO_TARGET_DIR: output
-
-      - name: Archive Rust Target Directory
-        shell: bash
-        run: |
-          if [ "${{ matrix.host }}" = "windows" ]; then
-            7z a target.zip target
-          else
-            zip target.zip target
-          fi
 
       - name: Save Rust Cache
         uses: actions/cache/save@v4
@@ -110,7 +84,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target.zip
+            target
           key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Upload Rust Cache as Artifact (for debugging)
@@ -120,7 +94,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target.zip
+            target
 
       - name: Generate File Stem
         shell: bash
