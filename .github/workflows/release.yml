@@ -105,12 +105,12 @@ jobs:
           if [ "${{ matrix.host }}" = "windows" ]; then
             cp "output/${{ matrix.target }}/release/$BIN.exe" staging/
             cd staging
-            mv $BIN.exe $ARTIFACT_STEM.exe
+            mv ./$BIN.exe ./$ARTIFACT_STEM.exe
             7z a ../$ARTIFACT_NAME *
           else
             cp "output/${{ matrix.target }}/release/$BIN" staging/
             cd staging
-            mv $BIN $ARTIFACT_STEM
+            mv ./$BIN ./$ARTIFACT_STEM
             zip ../$ARTIFACT_NAME *
           fi
 
