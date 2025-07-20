@@ -127,7 +127,7 @@ jobs:
     name: Build VS Code
     runs-on: ubuntu-latest
     env:
-      BIN: rsml-lsp
+      BIN: rsml-lsp-vscode
     steps:
       - uses: actions/checkout@v4
         with:
