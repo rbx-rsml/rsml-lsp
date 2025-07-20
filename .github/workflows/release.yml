@@ -155,7 +155,8 @@ jobs:
       - name: Create Archive
         shell: bash
         run: |
-          zip -r ${{ env.ARTIFACT_NAME }} extensions/vscode
+          cd extensions/vscode
+          zip -r ${{ env.ARTIFACT_NAME }} *
       
 
       - name: Upload VSCode LSP to Artifacts
