@@ -42,7 +42,7 @@ jobs:
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          echo "SEMVER=${TAG_NAME#vscode}" >> "$GITHUB_ENV"
+          echo "SEMVER=${TAG_NAME#vscode-}" >> "$GITHUB_ENV"
 
       - name: Update Version In package.json
         run: |
