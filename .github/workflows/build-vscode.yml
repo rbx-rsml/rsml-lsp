@@ -1,0 +1,47 @@
+name: "Build Extension (VS Code)"
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    name: Build VS Code
+    runs-on: ubuntu-latest
+    env:
+      BIN: rsml-lsp-vscode
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Download LSP Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./downloaded-artifacts
+
+      - name: Create Destination
+        run: mkdir -p extensions/vscode/server
+
+      - name: Extract Artifacts To Destination
+        run: |
+          for archive in ./downloaded-artifacts/**/*.zip; do
+            unzip -o "$archive" -d extensions/vscode/server
+          done
+      
+      - name: Generate Artifact Name
+        shell: bash
+        run: |
+          echo "ARTIFACT_NAME=$BIN.zip" >> "$GITHUB_ENV"
+
+      - name: Create Archive
+        shell: bash
+        run: |
+          cd extensions/vscode
+          zip -r ../../${{ env.ARTIFACT_NAME }} *
+      
+
+      - name: Upload VSCode LSP to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          path: ${{ env.ARTIFACT_NAME }}
+          name: ${{ env.ARTIFACT_NAME }}
