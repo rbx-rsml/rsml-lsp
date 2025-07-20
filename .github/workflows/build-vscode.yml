@@ -75,7 +75,7 @@ jobs:
         shell: bash
         run: |
           cd extensions/vscode
-          zip -r ../../${{ env.ARTIFACT_NAME }} *
+          zip -r ../../${{ env.ARTIFACT_NAME }} . -x ".git/*"
       
       - name: Upload VSCode LSP to Artifacts
         uses: actions/upload-artifact@v4
