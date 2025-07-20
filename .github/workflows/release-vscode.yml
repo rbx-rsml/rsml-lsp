@@ -1,0 +1,103 @@
+name: "Build Extension (VS Code)"
+
+on:
+  push:
+    tags: ["vscode-v*"]
+
+jobs:
+  build: 
+    uses: ./.github/workflows/release.yml
+
+  build-vscode:
+    name: Build VS Code
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      BIN: rsml-lsp-vscode
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+        
+      - name: Restore Bun Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.bun
+            ~/bun.lock
+            /node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: 1.1.21
+
+      - name: Install Dependencies
+        run: cd extensions/vscode && bun install
+
+      - name: Update Version In package.json
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: bun pm version ${TAG_NAME#vscode-v}
+
+      - name: Transpile TS to JS
+        run: cd extensions/vscode && tsc
+
+      - name: Cache Bun
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.bun
+            ~/bun.lock
+            /node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+
+      - name: Remove Redundant Files
+        run: |
+          cd extensions/vscode
+          [ -d src ] && rm -r src
+          [ -f tsconfig.json ] && rm -r tsconfig.json
+
+      - name: Download LSP Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./downloaded-artifacts
+
+      - name: Create Destination
+        run: mkdir -p extensions/vscode/server
+
+      - name: Extract Artifacts To Destination
+        run: |
+          for archive in ./downloaded-artifacts/**/*.zip; do
+            unzip -o "$archive" -d extensions/vscode/server
+          done
+      
+      - name: Generate Artifact Name
+        shell: bash
+        run: |
+          echo "ARTIFACT_NAME=$BIN.zip" >> "$GITHUB_ENV"
+
+      - name: Create Archive
+        shell: bash
+        run: |
+          cd extensions/vscode
+          zip -r ../../${{ env.ARTIFACT_NAME }} . -x ".git/*"
+      
+      - name: Upload VSCode LSP to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          path: ${{ env.ARTIFACT_NAME }}
+          name: ${{ env.ARTIFACT_NAME }}
+
+      - name: Add Artifact To Release
+        run: gh release upload ${{ github.ref_name }} ../$ARTIFACT_NAME
+
+      - name: Install vsce
+        run: bun install -g vsce
+
+      #- name: Publish extension
+      #  env:
+      #    VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
+      #  run: vsce publish --pat $VSCE_TOKEN
