@@ -81,6 +81,10 @@ jobs:
       - name: Save Rust Cache
         uses: actions/cache/save@v4
         with:
+          path: |
+              ~/.cargo/registry
+              ~/.cargo/git
+              target
           key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Generate Artifact Name
@@ -88,7 +92,8 @@ jobs:
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          echo "ARTIFACT_NAME=$BIN-${{ matrix.label }}.zip" >> "$GITHUB_ENV"
+          echo "ARTIFACT_STEM=$BIN-${{ matrix.label }}" >> "$GITHUB_ENV"
+          echo "ARTIFACT_NAME=$ARTIFACT_STEM.zip" >> "$GITHUB_ENV"
 
       - name: Create Archive
         shell: bash
@@ -100,11 +105,13 @@ jobs:
           if [ "${{ matrix.host }}" = "windows" ]; then
             cp "output/${{ matrix.target }}/release/$BIN.exe" staging/
             cd staging
-            7z a ../$ARTIFACT_NAME $ARTIFACT_NAME
+            mv $BIN.exe $ARTIFACT_STEM.exe
+            7z a ../$ARTIFACT_NAME *
           else
             cp "output/${{ matrix.target }}/release/$BIN" staging/
             cd staging
-            zip ../$ARTIFACT_NAME $ARTIFACT_NAME
+            mv $BIN $ARTIFACT_STEM
+            zip ../$ARTIFACT_NAME *
           fi
 
       - name: Upload Archive to Artifacts
