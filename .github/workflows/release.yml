@@ -1,8 +1,7 @@
 name: Build
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}
@@ -21,7 +20,7 @@ jobs:
           gh release create ${{ github.ref_name }} --draft --verify-tag --title ${{ github.ref_name }}
 
   build:
-    #needs: ["create-release"]
+    needs: ["create-release"]
     strategy:
       fail-fast: false
       matrix:
@@ -116,7 +115,3 @@ jobs:
         with:
           path: ${{ env.ARTIFACT_NAME }}
           name: ${{ env.ARTIFACT_NAME }}
-
-  build_vscode:
-    needs: build
-    uses: ./.github/workflows/build-vscode.yml
