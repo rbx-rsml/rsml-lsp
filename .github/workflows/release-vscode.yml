@@ -40,7 +40,8 @@ jobs:
       - name: Update Version In package.json
         env:
           TAG_NAME: ${{ github.ref_name }}
-        run: cd extensions/vscode && bun pm version ${TAG_NAME#vscode-v}
+        run: |
+          cd extensions/vscode && bun pm version "${TAG_NAME#vscode-v}"
 
       - name: Transpile TS to JS
         run: cd extensions/vscode && tsc
