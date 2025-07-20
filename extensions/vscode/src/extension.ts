@@ -7,29 +7,26 @@ import vscode from "vscode"
 
 let client: LanguageClient;
 
-const basePath = "./server"
-const serverModuleName = "rsml-lsp"
+const basePath = "./server/rsml-lsp"
 
 const getServerModulePath = (context: ExtensionContext): string | undefined => {
     switch (process.platform) {
-        case "win32": return context.asAbsolutePath(path.join(basePath, `${serverModuleName}-windows-x86_64.exe`))
+        case "win32": return context.asAbsolutePath(path.join(basePath, `${basePath}-windows-x86_64.exe`))
 
         case "darwin": switch (process.arch) {
-            case "arm64": return context.asAbsolutePath(path.join(basePath, `${serverModuleName}-macos-aarch64`))
-            case "x64": return context.asAbsolutePath(path.join(basePath, `${serverModuleName}-macos-x86_64`))
+            case "arm64": return context.asAbsolutePath(path.join(basePath, `${basePath}-macos-aarch64`))
+            case "x64": return context.asAbsolutePath(path.join(basePath, `${basePath}-macos-x86_64`))
         }
 
-        case "linux": return context.asAbsolutePath(path.join(basePath, `${serverModuleName}-linux-x86_64`))
+        case "linux": return context.asAbsolutePath(path.join(basePath, `${basePath}-linux-x86_64`))
     }
 
     return undefined
 }
 
-const outputChannel = vscode.window.createOutputChannel('RSML');
-
 export function activate(context: ExtensionContext) {
     let serverModulePath = getServerModulePath(context)
-    if (!serverModulePath) return vscode.window.showErrorMessage("Could not locate the LSP file!")
+    if (!serverModulePath || !fs.existsSync(serverModulePath)) return vscode.window.showErrorMessage("Could not locate the LSP file!")
 
     const serverOptions: ServerOptions = {
         run: { command: serverModulePath },
