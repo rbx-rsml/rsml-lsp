@@ -115,18 +115,22 @@ jobs:
     env:
       BIN: rsml-lsp
     steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          
       - name: Download LSP Artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./downloaded-artifacts
 
       - name: Create Destination
-        run: mkdir -p /extensions/vscode/server
+        run: mkdir -p extensions/vscode/server
 
       - name: Extract Artifacts To Destination
         run: |
           for archive in ./downloaded-artifacts/**/*.zip; do
-            unzip -o "$archive" -d /extensions/vscode/server
+            unzip -o "$archive" -d extensions/vscode/server
           done
       
       - name: Generate Artifact Name
@@ -137,7 +141,7 @@ jobs:
       - name: Create Archive
         shell: bash
         run: |
-          zip -r ${{ env.ARTIFACT_NAME }} /extensions/vscode
+          zip -r ${{ env.ARTIFACT_NAME }} extensions/vscode
       
 
       - name: Upload VSCode LSP to Artifacts
