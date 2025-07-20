@@ -68,7 +68,10 @@ jobs:
           save-always: true
 
       - name: Setup Rust
-        run: rustup override set 1.85.0
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.85.0
+          override: true
 
       - name: Build Release
         run: cargo build --release --locked --verbose --target ${{ matrix.target }}
