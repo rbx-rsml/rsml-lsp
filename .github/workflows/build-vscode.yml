@@ -19,9 +19,9 @@ jobs:
         with:
           path: |
             ~/.bun
-            ~/bun.lockb
+            ~/bun.lock
             /node_modules
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lockb') }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
 
       - name: Setup Bun
@@ -40,9 +40,9 @@ jobs:
         with:
           path: |
             ~/.bun
-            ~/bun.lockb
+            ~/bun.lock
             /node_modules
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lockb') }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
 
       - name: Remove Redundant Files
         run: |
@@ -51,6 +51,7 @@ jobs:
           rm -r node_modules
           rm -r bun.lock
           rm -r tsconfig.json
+          rm -r .vscodeignore
 
       - name: Download LSP Artifacts
         uses: actions/download-artifact@v4
