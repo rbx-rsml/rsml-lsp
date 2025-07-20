@@ -116,6 +116,8 @@ jobs:
     needs: ["build_lsp"]
     name: Build VS Code
     runs-on: ubuntu-latest
+    env:
+      BIN: rsml-lsp
     steps:
       - name: Download LSP Artifacts
         uses: actions/download-artifact@v4
@@ -139,7 +141,7 @@ jobs:
       - name: Create Archive
         shell: bash
         run: |
-          zip -r rsml-lsp-vscode.zip extension/vscode
+          zip -r ${{ env.ARTIFACT_NAME }} extension/vscode
       
 
       - name: Upload VSCode LSP to Artifacts
