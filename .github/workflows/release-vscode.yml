@@ -37,16 +37,16 @@ jobs:
       - name: Install Dependencies
         run: cd extensions/vscode && bun install
 
-      - name: Get Version
+      - name: Get Semantic Version
         shell: bash
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          echo "VERSION=${TAG_NAME#vscode-v}" >> "$GITHUB_ENV"
+          echo "SEMVER=${TAG_NAME#vscode}" >> "$GITHUB_ENV"
 
       - name: Update Version In package.json
         run: |
-          cd extensions/vscode && bun pm version ${{ env.VERSION }}
+          cd extensions/vscode && bun pm version ${{ env.SEMVER }}
 
       - name: Transpile TS to JS
         run: cd extensions/vscode && tsc
