@@ -78,6 +78,11 @@ jobs:
           # easily.
           CARGO_TARGET_DIR: output
 
+      - name: Save Rust Cache
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Generate Artifact Name
         shell: bash
         env:
