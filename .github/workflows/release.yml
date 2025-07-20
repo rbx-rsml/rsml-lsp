@@ -73,10 +73,14 @@ jobs:
       - name: Extract target.zip
         shell: bash
         run: |
-          if [ "${{ matrix.host }}" = "windows" ]; then
-            7z x target.zip
+          if [ -f target.zip ]; then
+            if [ "${{ matrix.host }}" = "windows" ]; then
+              7z x target.zip
+            else
+              unzip target.zip
+            fi
           else
-            unzip target.zip
+            echo "target.zip not found, skipping extraction."
           fi
         
       - name: Install Rust
