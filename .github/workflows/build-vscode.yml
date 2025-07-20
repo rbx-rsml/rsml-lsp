@@ -44,8 +44,13 @@ jobs:
             /node_modules
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lockb') }}
 
-      - name: Remove `/src` and `/node_modules` 
-        run: cd extensions/vscode && rm -r src && rm -r node_modules
+      - name: Remove Redundant Files
+        run: |
+          cd extensions/vscode
+          rm -r src
+          rm -r node_modules
+          rm -r bun.lock
+          rm -r tsconfig.json
 
       - name: Download LSP Artifacts
         uses: actions/download-artifact@v4
