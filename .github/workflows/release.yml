@@ -95,11 +95,11 @@ jobs:
           if [ "${{ matrix.host }}" = "windows" ]; then
             cp "output/${{ matrix.target }}/release/$BIN.exe" staging/
             cd staging
-            7z a ../$ARTIFACT_NAME *
+            7z a ../$ARTIFACT_NAME $ARTIFACT_NAME
           else
             cp "output/${{ matrix.target }}/release/$BIN" staging/
             cd staging
-            zip ../$ARTIFACT_NAME *
+            zip ../$ARTIFACT_NAME $ARTIFACT_NAME
           fi
 
       - name: Upload Archive to Artifacts
@@ -118,7 +118,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-          
+
       - name: Download LSP Artifacts
         uses: actions/download-artifact@v4
         with:
