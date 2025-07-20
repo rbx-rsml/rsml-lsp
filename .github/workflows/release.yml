@@ -87,6 +87,15 @@ jobs:
               target
           key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Upload Rust Cache as Artifact (for debugging)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-cache-${{ matrix.os }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+
       - name: Generate File Stem
         shell: bash
         run: |
