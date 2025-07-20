@@ -1,6 +1,3 @@
 .gitignore
 src
-node_modules
 tsconfig.json
-bun.lockb
-bun.lock
