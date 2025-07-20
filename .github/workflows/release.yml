@@ -57,6 +57,16 @@ jobs:
         with:
           submodules: true
 
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          save-always: true
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
