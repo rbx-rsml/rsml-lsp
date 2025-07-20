@@ -67,13 +67,8 @@ jobs:
           key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           save-always: true
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Rust
+        run: rustup override set 1.85.0
 
       - name: Build Release
         run: cargo build --release --locked --verbose --target ${{ matrix.target }}
@@ -125,12 +120,12 @@ jobs:
           path: ./downloaded-artifacts
 
       - name: Create Destination
-        run: mkdir -p extension/vscode/server
+        run: mkdir -p extensions/vscode/server
 
       - name: Extract Artifacts To Destination
         run: |
           for archive in ./downloaded-artifacts/**/*.zip; do
-            unzip -o "$archive" -d extension/vscode/server
+            unzip -o "$archive" -d extensions/vscode/server
           done
       
       - name: Generate Artifact Name
@@ -141,7 +136,7 @@ jobs:
       - name: Create Archive
         shell: bash
         run: |
-          zip -r ${{ env.ARTIFACT_NAME }} extension/vscode
+          zip -r ${{ env.ARTIFACT_NAME }} extensions/vscode
       
 
       - name: Upload VSCode LSP to Artifacts
