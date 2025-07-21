@@ -111,7 +111,7 @@ jobs:
       - name: Install vsce
         run: bun install -g vsce
 
-      #- name: Publish extension
-      #  env:
-      #    VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
-      #  run: cd extensions/vscode && vsce publish --pat $VSCE_TOKEN
+      - name: Publish extension
+        env:
+          VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
+        run: cd extensions/vscode && vsce publish --pat $VSCE_TOKEN
