@@ -61,14 +61,12 @@
             }
         ]
     },
-    "dependencies": {
-        "net": "^1.0.2",
-        "vscode-languageclient": "^9.0.1"
-    },
     "devDependencies": {
         "vscode": "^1.1.37",
         "@types/node": "^24.0.12",
         "globby": "^14.1.0",
-        "esbuild": "^0.25.8"
+        "esbuild": "^0.25.8",
+        "net": "^1.0.2",
+        "vscode-languageclient": "^9.0.1"
     }
 }

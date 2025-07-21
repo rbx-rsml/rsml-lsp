@@ -69,6 +69,7 @@ jobs:
           [ -d node_modules ] && rm -r node_modules
           [ -d src ] && rm -r src
           [ -f tsconfig.json ] && rm -r tsconfig.json
+          [ -f build.mjs ] && rm -r build.mjs
 
       - name: Download LSP Artifacts
         uses: actions/download-artifact@v4

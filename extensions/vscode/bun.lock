@@ -3,15 +3,13 @@
   "workspaces": {
     "": {
       "name": "roblox-style-management-language",
-      "dependencies": {
-        "net": "^1.0.2",
-        "vscode-languageclient": "^9.0.1",
-      },
       "devDependencies": {
         "@types/node": "^24.0.12",
         "esbuild": "^0.25.8",
         "globby": "^14.1.0",
+        "net": "^1.0.2",
         "vscode": "^1.1.37",
+        "vscode-languageclient": "^9.0.1",
       },
     },
   },
