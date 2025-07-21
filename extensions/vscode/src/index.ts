@@ -26,6 +26,8 @@ const getServerModulePath = (context: ExtensionContext): string | undefined => {
 }
 
 export function activate(context: ExtensionContext) {
+    vscode.window.showInformationMessage("Activated RSML LSP")
+
     let serverModulePath = getServerModulePath(context)
     if (!serverModulePath) return vscode.window.showErrorMessage("The RSML LSP is not supported on your platform")
     if (!fs.existsSync(serverModulePath)) return vscode.window.showErrorMessage("Could not locate the RSML LSP. (This is a bug and should be reported [here](https://github.com/rbx-rsml/rsml-lsp/issues)).")

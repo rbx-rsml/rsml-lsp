@@ -2,23 +2,24 @@ import * as esbuild from "esbuild"
 import { globby } from "globby";
 
 const inject = await globby([
-    "src/**/*.{js,ts,tsx}"
+    "src/**/*.{js,ts,tsx}",
+    '!src/index.ts'
 ]);
 
-const release = process.argv.includes('--release');
 const watch = process.argv.includes('--watch');
 
 async function main() {
     const ctx = await esbuild.context({
-        stdin: { contents: '' },
+        entryPoints:["src/index.ts"],
         inject: inject,
         bundle: true,
+        minify: false,
+        keepNames: true,
         format: 'cjs',
-        minify: release,
-        sourcemap: !release,
+        sourcemap: false,
         sourcesContent: false,
         platform: 'node',
-        outfile: 'out.js',
+        outfile: 'index.js',
         external: ['vscode'],
         logLevel: 'warning',
         plugins: [

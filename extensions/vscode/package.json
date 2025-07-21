@@ -11,7 +11,7 @@
     "categories": [
         "Programming Languages"
     ],
-    "main": "./out.js",
+    "main": "index.js",
     "activationEvents": [],
     "repository": "https://github.com/rsmlang/rsml-lsp",
     "scripts": {

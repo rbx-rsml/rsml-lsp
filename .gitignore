@@ -3,8 +3,9 @@
 
 # VSCode Extension
 /extensions/vscode/node_modules
-/extensions/vscode/out.js
+/extensions/vscode/index.js
 /extensions/vscode/server
+**/*.vsix
 
 # Macos Junk
 ._*

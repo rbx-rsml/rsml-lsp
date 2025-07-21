@@ -70,6 +70,7 @@ jobs:
           [ -d src ] && rm -r src
           [ -f tsconfig.json ] && rm -r tsconfig.json
           [ -f build.mjs ] && rm -r build.mjs
+          [ -f bun.lock ] && rm -r bun.lock
 
       - name: Download LSP Artifacts
         uses: actions/download-artifact@v4
