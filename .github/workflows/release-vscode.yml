@@ -60,11 +60,10 @@ jobs:
             extensions/vscode/node_modules
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
 
-      - name: Remove Redundant Files
+      - name: Remove Redundant Files and Dirs
         run: |
           cd extensions/vscode
           [ -d src ] && rm -r src
-          [ -d node_modules ] && rm -r node_modules
           [ -f tsconfig.json ] && rm -r tsconfig.json
 
       - name: Download LSP Artifacts
@@ -72,15 +71,28 @@ jobs:
         with:
           path: ./downloaded-artifacts
 
-      - name: Create Destination
+      - name: Create Server Artifacts Destination
         run: mkdir -p extensions/vscode/server
 
-      - name: Extract Artifacts To Destination
+      - name: Extract Server Artifacts To Destination
         run: |
           for archive in ./downloaded-artifacts/**/*.zip; do
             unzip -o "$archive" -d extensions/vscode/server
           done
-      
+
+      - name: Install vsce
+        run: bun install -g vsce
+
+      - name: Publish extension
+        env:
+          VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
+        run: cd extensions/vscode && vsce publish --pat $VSCE_TOKEN
+
+      - name: Remove Redundant Files and Dirs
+        run: |
+          cd extensions/vscode
+          [ -d node_modules ] && rm -r node_modules
+
       - name: Generate Artifact Name
         shell: bash
         run: |
@@ -102,11 +114,3 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload ${{ github.ref_name }} $ARTIFACT_NAME
-
-      - name: Install vsce
-        run: bun install -g vsce
-
-      - name: Publish extension
-        env:
-          VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
-        run: cd extensions/vscode && vsce publish --pat $VSCE_TOKEN
