@@ -1,4 +1,5 @@
+src/**/*
+node_modules/**/*
 .gitignore
-src
 tsconfig.json
 build.mjs

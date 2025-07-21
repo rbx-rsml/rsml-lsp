@@ -66,6 +66,7 @@ jobs:
       - name: Remove Redundant Files and Dirs
         run: |
           cd extensions/vscode
+          [ -d node_modules ] && rm -r node_modules
           [ -d src ] && rm -r src
           [ -f tsconfig.json ] && rm -r tsconfig.json
 
@@ -82,19 +83,6 @@ jobs:
           for archive in ./downloaded-artifacts/**/*.zip; do
             unzip -o "$archive" -d extensions/vscode/server
           done
-
-      - name: Install vsce
-        run: bun install -g vsce
-
-      - name: Publish extension
-        env:
-          VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
-        run: cd extensions/vscode && vsce publish --pat $VSCE_TOKEN
-
-      - name: Remove Redundant Files and Dirs
-        run: |
-          cd extensions/vscode
-          [ -d node_modules ] && rm -r node_modules
 
       - name: Generate Artifact Name
         shell: bash
@@ -117,3 +105,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload ${{ github.ref_name }} $ARTIFACT_NAME
+
+      - name: Install vsce
+        run: bun install -g vsce
+
+      #- name: Publish extension
+      #  env:
+      #    VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
+      #  run: cd extensions/vscode && vsce publish --pat $VSCE_TOKEN
