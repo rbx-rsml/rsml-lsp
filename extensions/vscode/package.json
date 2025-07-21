@@ -11,9 +11,12 @@
     "categories": [
         "Programming Languages"
     ],
-    "main": "./out/extension.js",
+    "main": "./out.js",
     "activationEvents": [],
     "repository": "https://github.com/rsmlang/rsml-lsp",
+    "scripts": {
+        "build": "bun run build.mjs"
+    },
     "contributes": {
         "languages": [
             {
@@ -64,6 +67,8 @@
     },
     "devDependencies": {
         "vscode": "^1.1.37",
-        "@types/node": "^24.0.12"
+        "@types/node": "^24.0.12",
+        "globby": "^14.1.0",
+        "esbuild": "^0.25.8"
     }
 }

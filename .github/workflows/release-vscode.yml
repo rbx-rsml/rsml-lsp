@@ -52,7 +52,7 @@ jobs:
           fi
 
       - name: Transpile TS to JS
-        run: cd extensions/vscode && tsc
+        run: cd extensions/vscode && bun run build --release
 
       - name: Cache Bun
         uses: actions/cache/save@v4
