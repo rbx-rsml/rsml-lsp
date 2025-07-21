@@ -46,7 +46,10 @@ jobs:
 
       - name: Update Version In package.json
         run: |
-          cd extensions/vscode && bun pm version ${{ env.SEMVER }}
+          cd extensions/vscode
+          if ! bun pm version ${{ env.SEMVER }}; then
+            echo "Version not changed"
+          fi
 
       - name: Transpile TS to JS
         run: cd extensions/vscode && tsc

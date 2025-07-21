@@ -12,9 +12,7 @@
         "Programming Languages"
     ],
     "main": "./out/extension.js",
-    "activationEvents": [
-
-    ],
+    "activationEvents": [],
     "repository": "https://github.com/rsmlang/rsml-lsp",
     "contributes": {
         "languages": [
