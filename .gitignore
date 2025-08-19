@@ -13,3 +13,6 @@
 
 # Test
 **/*.rsml
+
+# Watch Tool
+/watch/node_modules

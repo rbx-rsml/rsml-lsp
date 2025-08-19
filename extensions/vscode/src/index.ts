@@ -8,18 +8,18 @@ import vscode from "vscode"
 let client: LanguageClient;
 
 const basePath = "./server"
-const filePrefix = "rsml-lsp-"
+const fileNamePrefix = "rsml-lsp-"
 
 const getServerModulePath = (context: ExtensionContext): string | undefined => {
     switch (process.platform) {
-        case "win32": return context.asAbsolutePath(path.join(basePath, `${filePrefix}windows-x86_64.exe`))
+        case "win32": return context.asAbsolutePath(path.join(basePath, `${fileNamePrefix}windows-x86_64.exe`))
 
         case "darwin": switch (process.arch) {
-            case "arm64": return context.asAbsolutePath(path.join(basePath, `${filePrefix}macos-aarch64`))
-            case "x64": return context.asAbsolutePath(path.join(basePath, `${filePrefix}macos-x86_64`))
+            case "arm64": return context.asAbsolutePath(path.join(basePath, `${fileNamePrefix}macos-aarch64`))
+            case "x64": return context.asAbsolutePath(path.join(basePath, `${fileNamePrefix}macos-x86_64`))
         }
 
-        case "linux": return context.asAbsolutePath(path.join(basePath, `${filePrefix}linux-x86_64`))
+        case "linux": return context.asAbsolutePath(path.join(basePath, `${fileNamePrefix}linux-x86_64`))
     }
 
     return undefined
@@ -34,7 +34,8 @@ export function activate(context: ExtensionContext) {
 
     const serverOptions: ServerOptions = {
         run: { command: serverModulePath },
-        debug: { command: serverModulePath, args: ["--debug"] }  // if you want debug mode
+        debug: { command: serverModulePath, args: ["--debug"] }  // if you want debug mode,
+        
     };
 
     const clientOptions: LanguageClientOptions = {

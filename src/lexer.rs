@@ -1,131 +1,200 @@
-use core::fmt;
+use std::{collections::{HashMap, HashSet}, mem::{discriminant, Discriminant}, sync::LazyLock};
+use enum_kinds::EnumKind;
 use guarded::guarded_unwrap;
 use logos::{Lexer as LogosLexer, Logos, SpannedIter};
+use ropey::Rope;
+use crate::{lazy_collection};
+use crate::string_clip::StringClip;
 
-#[derive(Default, Debug, Clone, PartialEq)]
-pub enum LexicalError {
-    #[default]
-    InvalidToken,
-
-    Ignore
+pub struct Lexer<'a> {
+    token_stream: SpannedIter<'a, Token<'a>>,
+    pub rope: Rope
 }
 
-pub type Spanned<Token, Loc, Error> = Result<(Loc, Token, Loc), Error>;
+impl<'a> Lexer<'a> {
+    pub fn new(input: &'a str) -> Self {
+        Self {
+            token_stream: Token::lexer(input).spanned(),
+            rope: Rope::from_str(input)
+        }
+    }
 
-#[derive(Logos, Clone, Debug, PartialEq)]
-#[logos(skip r"[ \t\n\f]+", skip r"#.*\n?", error = LexicalError)]
-pub enum Token {
-    // Do not change the order of the operators.
-    #[token("^")]
-    OpPow,
-    #[token("/")]
-    OpDiv,
-    #[token("//")]
-    OpFloorDiv,
-    #[token("%", priority = 5)]
-    OpMod,
-    #[token("*")]
-    OpMult,
-    #[token("+")]
-    OpAdd,
-    #[token("-")]
-    OpSub,
+    pub fn slice(&self) -> &'a str {
+        self.token_stream.slice()
+    }
+}
 
+impl<'a> Iterator for Lexer<'a> {
+    type Item = SpannedToken<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (token, span) = guarded_unwrap!(self.token_stream.next(), return None);
+    
+        match token {
+            Ok(token) => Some(SpannedToken::new(span.start, token, span.end)),
+            Err(_) => Some(SpannedToken::new(span.start, Token::Error, span.end)),
+        }
+    }
+}
+
+pub static DECLARATION_NAMES: [&str; 4] = [ "@derive", "@macro", "@priority", "@name" ];
+
+#[derive(Debug, Clone)]
+pub struct SpannedToken<'a>(pub usize, pub Token<'a>, pub usize);
+
+impl<'a> SpannedToken<'a> {
+    pub fn new(start: usize, value: Token<'a>, end: usize ) -> Self {
+        Self (start, value, end)
+    }
+
+    #[inline(always)]
+    pub fn start(&self) -> usize {
+        self.0
+    }
+
+    #[inline(always)]
+    pub fn value(&self) -> &Token<'a> {
+        &self.1
+    }
+
+    #[inline(always)]
+    pub fn end(&self) -> usize {
+        self.2
+    }
+
+    #[inline(always)]
+    pub fn span(&self) -> (usize, usize) {
+        (self.0, self.2)
+    }
+}
+ 
+fn str_to_option(str: &str) -> Option<&str> {
+    if str.len() == 0 { None } else { Some(str) }
+}
+
+#[derive(Logos, Clone, Debug, PartialEq, EnumKind)]
+#[enum_kind(TokenKind, derive(Hash))]
+#[logos(skip r"[ \t\n\f]+")]
+#[logos(subpattern ident = r"[_A-Za-z][_A-Za-z\d]*|[_A-Za-z]+(-[A-Za-z\d_]+)+")]
+#[logos(subpattern numsect = r"_*[\d]+_*")]
+#[logos(subpattern num = r"((?&numsect)+\.)?(?&numsect)+")]
+pub enum Token<'a> {
     #[regex(r"\-\-\[=*\[", priority = 99, callback = |lex| multiline_string_block_callback(lex, 2))]
     CommentMulti(Result<usize, usize>),
 
-    #[regex(r"\[=*\[", priority = 98, callback = |lex| multiline_string_block_callback(lex, 0))]
-    StringMulti(Result<usize, usize>),
-
-    #[regex(r"\-\-[^\[\n\f\r]*", priority = 98)]
+    #[regex(r"\-\-[^(\[\[)].*", priority = 1)]
+    #[regex(r"\-\-", priority = 1)]
     CommentSingle,
 
-    #[token("{", priority = 1)]
-    ScopeOpen,
+    // When adding a new declaration make sure to
+    // update the `DECLARATIONS` array located above.
 
-    #[token("}", priority = 1)]
-    ScopeClose,
-
-    #[token("(", priority = 1)]
-    ParensOpen,
-
-    #[token(")", priority = 1)]
-    ParensClose,
-
-    #[token(",", priority = 1)]
-    Comma,
-
-    #[token(";", priority = 1)]
-    SemiColon,
-
-    #[token(":", priority = 1)]
-    Colon,
-
-    #[token(".", priority = 1)]
-    Dot,
-
-    #[token("=", priority = 1)]
-    Equals,
-
-    #[regex(r"[_A-Za-z][_A-Za-z\d]*|[_A-Za-z]+(-[A-Za-z\d_]+)+")]
-    Identifier,
-
-    #[regex(r"\$[_A-Za-z][_A-Za-z\d]*|[_A-Za-z]+(-[A-Za-z\d_]+)+", priority = 1)]
-    TokenIdentifier,
-
-    #[regex(r"\$![_A-Za-z][_A-Za-z\d]*|[_A-Za-z]+(-[A-Za-z\d_]+)+", priority = 1)]
-    StaticTokenIdentifier,
-
-    #[regex(r"&[_A-Za-z][_A-Za-z\d]*|[_A-Za-z]+(-[A-Za-z\d_]+)+", priority = 1)]
-    StaticArgumentIdentifier,
-
-    #[regex(r"([_A-Za-z][_A-Za-z\d]*|[_A-Za-z]+(-[A-Za-z\d_]+)+)!")]
-    MacroIdentifier,
-
-    #[regex(r"\.[_A-Za-z][_A-Za-z\d]*|[_A-Za-z]+(-[A-Za-z\d_]+)+", priority = 1)]
-    TagSelectorOrEnumPart,
-
-    #[regex(r"#[_A-Za-z][_A-Za-z\d]*|[_A-Za-z]+(-[A-Za-z\d_]+)+", priority = 1)]
-    NameSelector,
-
-    #[regex(r"::[_A-Za-z][_A-Za-z\d]*|[_A-Za-z]+(-[A-Za-z\d_]+)+", priority = 1)]
-    PsuedoSelector,
-
-    #[regex(r":[_A-Za-z][_A-Za-z\d]*|[_A-Za-z]+(-[A-Za-z\d_]+)+", priority = 1)]
-    StateSelectorOrEnumPart,
-
-    #[token(">", priority = 1)]
-    ChildrenSelector,
-
-    #[token(">>", priority = 1)]
-    DescendantsSelector,
-
-    #[token("@priority", priority = 1)]
-    PriorityDeclaration,
-
-    #[token("@derive", priority = 1)]
+    #[token("@derive")]
     DeriveDeclaration,
-
-    #[token("@name", priority = 1)]
-    NameDeclaration,
 
     #[token("@macro")]
     MacroDeclaration,
 
-    #[token("@util")]
-    UtilDeclaration,
+    #[token("@priority")]
+    PriorityDeclaration,
 
-    #[token("true")]
-    BoolTrue,
+    #[token("@name")]
+    NameDeclaration,
 
-    #[token("false")]
-    BoolFalse,
+    // A catch-all for invalid declarations.
+    #[regex(r"@(?&ident)?", callback = |lex| str_to_option(&lex.slice()[1..]))]
+    InvalidDeclaration(Option<&'a str>),
 
-    #[token("nil")]
-    Nil,
+    #[regex(r"\$!(?&ident)?", callback = |lex| str_to_option(&lex.slice()[2..]))]
+    StaticTokenIdentifier(&'a str),
 
-    #[token("Enum")]
-    EnumKeyword,
+    #[regex(r"\$(?&ident)?", callback = |lex| str_to_option(&lex.slice()[1..]))]
+    TokenIdentifier(&'a str),
+
+    #[regex(r"(?&ident)")]
+    Identifier(&'a str),
+
+    #[regex(r"&(?&ident)?", callback = |lex| str_to_option(&lex.slice()[1..]))]
+    MacroArgIdentifier(Option<&'a str>),
+
+    #[regex(r"(?&ident)!", callback = |lex| str_to_option(&lex.slice().clip(0, 1)))]
+    MacroCallIdentifier(Option<&'a str>),
+
+    #[token("=")]
+    Equals,
+
+    #[token(",")]
+    Comma,
+
+    #[token(";")]
+    SemiColon,
+
+    #[regex(r"#(?&ident)", callback = |lex| str_to_option(&lex.slice()[1..]))]
+    NameSelector(&'a str),
+
+    #[regex(r"\.(?&ident)", callback = |lex| str_to_option(&lex.slice()[1..]))]
+    TagSelectorOrEnumPart(&'a str),
+
+    #[regex(r":(?&ident)", callback = |lex| str_to_option(&lex.slice()[1..]))]
+    StateSelectorOrEnumPart(&'a str),
+
+    #[regex(r"::(?&ident)", callback = |lex| str_to_option(&lex.slice()[1..]))]
+    PseudoSelector(&'a str),
+
+    #[token(">")]
+    ChildrenSelector,
+
+    #[token(">>")]
+    DescendantsSelector,
+
+    #[token("{")]
+    ScopeOpen,
+
+    #[token("}")]
+    ScopeClose,
+
+    #[token("(")]
+    ParensOpen,
+
+    #[token(")")]
+    ParensClose,
+
+    #[token("/")]
+    OpDiv,
+
+    #[token("//")]
+    OpFloorDiv,
+
+    #[token("%")]
+    OpMod,
+
+    #[token("*")]
+    OpMult,
+
+    #[token("^")]
+    OpPow,
+
+    #[token("+")]
+    OpAdd,
+
+    #[token("-")]
+    OpSub,
+
+    #[regex(r"\[=*\[", priority = 98, callback = |lex| multiline_string_block_callback(lex, 0))]
+    StringMulti(Result<usize, usize>),
+
+    #[regex(r#""[^\"\n\t]*""#)]
+    #[regex(r#"'[^\'\n\t]*'"#)]
+    StringSingle(&'a str),
+
+    #[regex(r"(?&num)", priority = 4)]
+    Number(&'a str),
+
+    #[regex(r"(?&num)%", priority = 4)]
+    NumberScale(&'a str),
+
+    #[regex(r"(?&num)px", priority = 4)]
+    NumberOffset(&'a str),
 
     #[regex(r"(?i)tw:[a-z]+(:\d+)?")]
     ColorTailwind,
@@ -139,50 +208,55 @@ pub enum Token {
     #[regex(r"(?i)css:[a-z]+")]
     ColorCss,
 
-    #[regex(r"#[\da-fA-F]+")]
+    #[regex(r"#[\da-fA-F]+", priority = 99)]
     ColorHex,
 
-    #[regex(r"[\d_]*\.?[\d_]+", priority = 4)]
-    Number,
-
-    #[regex(r"[\d_]*\.?[\d_]+%", priority = 45)]
-    NumberScale,
-
-    #[regex(r"[\d_]*\.?[\d_]+px", priority = 45)]
-    NumberOffset,
-
-    #[regex(r#""[^\"\n\t]*""#)]
-    #[regex(r#"'[^\'\n\t]*'"#)]
-    StringSingle,
-
-    #[regex(r"rbxassetid://\d*")]
-    #[regex(r"(rbxasset|rbxthumb|rbxgameasset|rbxhttp|rbxtemp|https?)://[^) ]*")]
-    RbxAsset,
-
-    #[regex(r"contentid://\d*", priority = 999)]
-    RbxContent,
+    #[token("Enum")]
+    EnumKeyword,
 
     Error,
-    Expr(Expr)
+
+    None
 }
 
+impl<'a> Token<'a> {
+    #[inline(always)]
+    pub fn discriminant(&self) -> Discriminant<TokenKind> {
+        discriminant(&TokenKind::from(self))
+    }
+
+    #[inline(always)]
+    pub fn kind(&self) -> TokenKind {
+        TokenKind::from(self)
+    }
+}
+
+impl TokenKind {
+    pub fn name(&self) -> &'static str {
+        TOKEN_KIND_STRING_MAP.get(self)
+            .map(|x| *x)
+            .unwrap_or_else(|| "**error**")
+    }
+}
+
+
 #[derive(Logos, Debug, PartialEq, Clone)]
-#[logos(skip r"[ \t\n\f]+", skip r"#.*\n?", error = LexicalError)]
+#[logos(skip r"[ \t\n\f]+")]
 enum MultilineStringToken {
     #[regex(r"\]=*\]")]
     ExitMultilineString,
 }
 
-fn multiline_string_block_callback(lex: &mut LogosLexer<Token>, sub_amount: usize) -> Result<usize, usize> {
-    let mut multiline_comment_lexer = lex.clone().morph::<MultilineStringToken>();
+fn multiline_string_block_callback<'a>(lexer: &mut LogosLexer<'a, Token<'a>>, sub_amount: usize) -> Result<usize, usize> {
+    let mut sub_lexer = lexer.clone().morph::<MultilineStringToken>();
 
-    let start_token_len = multiline_comment_lexer.slice().len() - sub_amount;
+    let start_token_len = sub_lexer.slice().len() - sub_amount;
 
-    while let Some(token) = multiline_comment_lexer.next() {
+    while let Some(token) = sub_lexer.next() {
         match token {
             Ok(MultilineStringToken::ExitMultilineString) => {
-                if start_token_len == multiline_comment_lexer.slice().len() {
-                    *lex = multiline_comment_lexer.morph();
+                if start_token_len == sub_lexer.slice().len() {
+                    *lexer = sub_lexer.morph();
 
                     return Ok(start_token_len - 2);
                 }
@@ -191,60 +265,63 @@ fn multiline_string_block_callback(lex: &mut LogosLexer<Token>, sub_amount: usiz
         }
     }
 
-    *lex = multiline_comment_lexer.morph();
+    *lexer = sub_lexer.morph();
     Err(start_token_len - 2)
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Expr {
-    MacroDefinition,
-    PriorityDefinition,
-    PropertyAssignment,
-    ScopeRuleDeclaration((Vec<Vec<Token>>, Vec<Token>)),
-    Operation((Box<Token>, Box<Token>, Box<Token>)),
-    Tuple((Option<Box<Token>>, Box<Vec<Token>>)),
-    MacroCall((Box<Token>, Box<Vec<Vec<Token>>>)),
-    Enum((Box<Token>, Box<Token>)),
-    EnumShorthand(Box<Token>),
-    AssetUrl(Box<Token>),
-    ContentUrl(Box<Token>)
-}
+pub const TOKEN_KIND_BLOCK_DELIMITERS: LazyLock<HashSet<TokenKind>> = lazy_collection! {
+    TokenKind::ParensClose,
+    TokenKind::ScopeClose,
+    TokenKind::SemiColon,
+};
 
-impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
+pub const TOKEN_KIND_INSIDE_PARENS_BLOCK_DELIMITERS: LazyLock<HashSet<TokenKind>> = lazy_collection! {
+    TokenKind::ParensClose,
+};
 
-pub struct Lexer<'input> {
-    token_stream: SpannedIter<'input, Token>
-}
+pub const TOKEN_KIND_ADD_SUB_PRECEDENCE: usize = 0;
 
-impl<'input> Lexer<'input> {
-    pub fn new(input: &'input str) -> Self {
-        Self { token_stream: Token::lexer(input).spanned() }
-    }
-}
+pub const TOKEN_KIND_OPERATOR_PRECEDENCE: LazyLock<HashMap<TokenKind, usize>> = lazy_collection! {
+    TokenKind::OpDiv => 1,
+    TokenKind::OpFloorDiv => 1,
+    TokenKind::OpMod => 1,
+    TokenKind::OpMult => 1,
+    TokenKind::OpPow => 1,
+    TokenKind::OpAdd => TOKEN_KIND_ADD_SUB_PRECEDENCE,
+    TokenKind::OpSub => TOKEN_KIND_ADD_SUB_PRECEDENCE,
+};
 
-impl<'input> Iterator for Lexer<'input> {
-    type Item = Spanned<Token, usize, LexicalError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-
-        loop {
-            let (token, span) = guarded_unwrap!(self.token_stream.next(), return None);
-        
-            match token {
-                Ok(token) => match token {
-                    // Ignores all single-line comments as well as multi-line
-                    // comments with a valid opening and closing tag.
-                    Token::CommentMulti(Ok(_)) |
-                    Token::CommentSingle => continue,
-
-                    _ => return Some(Ok((span.start, token, span.end)))
-                },
-                Err(_) => return Some(Ok((span.start, Token::Error, span.end))),
-            }
-        }
-    }
-}
+const TOKEN_KIND_STRING_MAP: LazyLock<HashMap<TokenKind, &'static str>> = lazy_collection! {
+    TokenKind::CommentMulti => "`comment`",
+    TokenKind::CommentSingle => "`comment`",
+    TokenKind::DeriveDeclaration => "\"@derive\"",
+    TokenKind::MacroDeclaration => "\"@macro\"",
+    TokenKind::PriorityDeclaration => "\"@priority\"",
+    TokenKind::NameDeclaration => "\"@name\"",
+    TokenKind::InvalidDeclaration => "`invalid declaration`",
+    TokenKind::Identifier => "`identifer`",
+    TokenKind::MacroArgIdentifier => "`macro argument`",
+    TokenKind::MacroCallIdentifier => "`macro call`",
+    TokenKind::Equals => "\"=\"",
+    TokenKind::Comma => "\",\"",
+    TokenKind::SemiColon => "\";\"",
+    TokenKind::NameSelector => "`name selector`",
+    TokenKind::TagSelectorOrEnumPart => "`tag selector`",
+    TokenKind::StateSelectorOrEnumPart => "`state selector`",
+    TokenKind::PseudoSelector => "`psuedo selector`",
+    TokenKind::ChildrenSelector => "\">\"",
+    TokenKind::DescendantsSelector => "\">>\"",
+    TokenKind::ScopeOpen => "\"{\"",
+    TokenKind::ScopeClose => "\"}\"",
+    TokenKind::ParensOpen => "\"(\"",
+    TokenKind::ParensClose => "\")\"",
+    TokenKind::StringMulti => "`string`",
+    TokenKind::StringSingle => "`string`",
+    TokenKind::Number => "`number`",
+    TokenKind::NumberScale => "`udim scale`",
+    TokenKind::NumberOffset => "`udim offset`",
+    TokenKind::ColorTailwind => "`tailwind color`",
+    TokenKind::ColorBrick => "`brick color`",
+    TokenKind::ColorCss => "`css color`",
+    TokenKind::ColorHex => "`hex color`",
+};
