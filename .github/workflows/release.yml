@@ -71,7 +71,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.91.0-nightly
+          toolchain: nightly-1.91.0
           targets: ${{ matrix.target }}
 
       - name: Build Release
