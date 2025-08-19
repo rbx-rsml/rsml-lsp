@@ -194,10 +194,11 @@ async fn watch() {
 
 async fn test() {
     let contents = fs::read_to_string("./test.rsml").await.unwrap();
+    
     let lexed = Lexer::new(&contents);
     println!("{:#?}", lexed.collect::<Vec<SpannedToken>>());
 
-    let parsed = Parser::new(Lexer::new(include_str!("../test.rsml")));
+    let parsed = Parser::new(Lexer::new(&contents));
     println!("{:#?} {:#?}", parsed.ast, parsed.ast_errors);
 }
 
