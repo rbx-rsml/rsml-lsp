@@ -41,10 +41,24 @@ impl<'a> ToString for ParseErrorMessage<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+enum TypeErrorKind {
+    UnknownDerive
+}
+
+impl TypeErrorKind {
+    fn to_str(&self) -> &str {
+        match self {
+            Self::UnknownDerive => "Unknown Derive"
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ParseError<'a> {
     // Errors.
     UnexpectedTokens { msg: Option<ParseErrorMessage<'a>> },
     MissingToken { msg: Option<ParseErrorMessage<'a>> },
+    TypeError { kind: TypeErrorKind, msg: Option<&'a str> },
 
     // Warnings.
     RedundantTokens { msg: Option<Cow<'a, str>> },
@@ -54,7 +68,8 @@ impl<'a> ParseError<'a> {
     pub fn severity(&self) -> DiagnosticSeverity {
         match self {
             Self::UnexpectedTokens { .. } |
-            Self::MissingToken { .. } => DiagnosticSeverity::ERROR,
+            Self::MissingToken { .. } |
+            Self::TypeError { .. } => DiagnosticSeverity::ERROR,
 
             Self::RedundantTokens { .. } => DiagnosticSeverity::WARNING
         }
@@ -71,6 +86,11 @@ impl<'a> ParseError<'a> {
                 Some(msg) => format!("Missing Token: {}", msg.to_string()),
                 None => String::from("Missing Token")
             },
+
+            Self::TypeError { kind, msg } => match msg {
+                Some(msg) => format!("Type Error ({}): {}", kind.to_str(), msg.to_string()),
+                None =>  format!("Type Error ({})", kind.to_str())
+            }
 
             Self::RedundantTokens { msg } => match msg {
                 Some(msg) => format!("Redundant Token(s): {}", msg),
@@ -110,10 +130,11 @@ impl<'a> ParseError<'a> {
 impl<'a> ToString for ParseError<'a> {
     fn to_string(&self) -> String {
          match self {
-            Self::UnexpectedTokens { .. } => "UNEXPECTED_TOKENS",
-            Self::MissingToken { .. } => "MISSING_TOKEN",
-            Self::RedundantTokens { .. } => "REDUNDANT_TOKENS",
-        }.into()
+            Self::UnexpectedTokens { .. } => "UNEXPECTED_TOKENS".into(),
+            Self::MissingToken { .. } => "MISSING_TOKEN".into(),
+            Self::TypeError { kind, .. } => format!("TYPE_ERROR[{}]", kind.to_str()),
+            Self::RedundantTokens { .. } => "REDUNDANT_TOKENS".into(),
+        }
     }
 }
 

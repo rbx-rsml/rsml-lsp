@@ -269,13 +269,18 @@ fn multiline_string_block_callback<'a>(lexer: &mut LogosLexer<'a, Token<'a>>, su
     Err(start_token_len - 2)
 }
 
-pub const TOKEN_KIND_BLOCK_DELIMITERS: LazyLock<HashSet<TokenKind>> = lazy_collection! {
+pub const TOKEN_KIND_CONSTRUCT_DELIMITERS: LazyLock<HashSet<TokenKind>> = lazy_collection! {
     TokenKind::ParensClose,
     TokenKind::ScopeClose,
     TokenKind::SemiColon,
+
+    TokenKind::DeriveDeclaration,
+    TokenKind::MacroDeclaration,
+    TokenKind::NameDeclaration,
+    TokenKind::PriorityDeclaration
 };
 
-pub const TOKEN_KIND_INSIDE_PARENS_BLOCK_DELIMITERS: LazyLock<HashSet<TokenKind>> = lazy_collection! {
+pub const TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS: LazyLock<HashSet<TokenKind>> = lazy_collection! {
     TokenKind::ParensClose,
 };
 

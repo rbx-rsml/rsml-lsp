@@ -3,7 +3,7 @@ use std::{collections::HashSet, mem::discriminant, sync::LazyLock};
 use ropey::Rope;
 use tower_lsp::lsp_types::{Diagnostic, NumberOrString, Range};
 
-use crate::{guarded_unwrap, guarded_unwrap_advance, lexer::{Lexer, SpannedToken, Token, TokenKind, DECLARATION_NAMES, TOKEN_KIND_ADD_SUB_PRECEDENCE, TOKEN_KIND_BLOCK_DELIMITERS, TOKEN_KIND_INSIDE_PARENS_BLOCK_DELIMITERS, TOKEN_KIND_OPERATOR_PRECEDENCE}, list::{Stringified, TokenKindList}, parser::parse_error::ParseErrorMessage};
+use crate::{guarded_unwrap, guarded_unwrap_advance, lexer::{Lexer, SpannedToken, Token, TokenKind, DECLARATION_NAMES, TOKEN_KIND_ADD_SUB_PRECEDENCE, TOKEN_KIND_CONSTRUCT_DELIMITERS, TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS, TOKEN_KIND_OPERATOR_PRECEDENCE}, list::{Stringified, TokenKindList}, parser::parse_error::ParseErrorMessage};
 
 mod range_from_span;
 use range_from_span::RangeFromSpan;
@@ -29,6 +29,23 @@ type Trivia<'a> = Vec<SpannedToken<'a>>;
 pub struct Node<'a> {
     token: SpannedToken<'a>,
     leading_trivia: Option<Trivia<'a>>
+}
+
+
+trait UpdateLastTokenEnd {
+    fn update_last_token_end(self, parser: &mut Parser) -> Self;
+}
+
+impl<'a> UpdateLastTokenEnd for Option<Node<'a>> {
+    fn update_last_token_end(self, parser: &mut Parser) -> Self {
+        // If there is a valid token then we update the
+        // end position of the most recent (this) token.
+        if let Some(Node { token: SpannedToken (_, _, end), .. }) = self {
+            parser.last_token_end = end
+        };
+
+        self
+    }
 }
 
 trait ToStatus<'a> {
@@ -168,6 +185,14 @@ impl<'a> Parser<'a> {
 
             node = parser.parse_derive(node).handle_construct(&mut parser.ast)?;
 
+            node = parser.parse_priority(node).handle_construct_with_err(
+                &mut parser.ast, &mut parser.ast_errors, &parser.lexer.rope, Some("the global scope")
+            )?;
+
+            node = parser.parse_name(node).handle_construct_with_err(
+                &mut parser.ast, &mut parser.ast_errors, &parser.lexer.rope, Some("the global scope")
+            )?;
+
             node = parser.parse_static_token_assignment(node).handle_construct(&mut parser.ast)?;
 
             node = parser.parse_token_assignment(node).handle_construct(&mut parser.ast)?;
@@ -254,8 +279,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Advances to the next valid node - does not set the `did_advance` flag.
-    fn advance_without_flag<'b>(
+    /// Advances to the next valid node - doesn't update the `did_advance` or `last_token_end` flags.
+    fn advance_without_flags<'b>(
         &mut self
     ) -> Option<Node<'a>> {
         match self.next_node()? {
@@ -270,35 +295,28 @@ impl<'a> Parser<'a> {
                             self.range_from_span((span_start, span_end))
                         );
 
-                        // If there is a valid token then we update the
-                        // end position of the most recent (this) token.
-                        if let Some(Node { token: SpannedToken (_, _, end), .. }) = node {
-                            self.last_token_end = end
-                        };
-
                         break node 
                     }
                 }
             },
 
-            node => {
-                self.last_token_end = node.token.end();
-                Some(node) 
-            }
+            node => Some(node)
         }
     }
     
     /// Advances to the next valid node.
     fn advance(&mut self) -> Option<Node<'a>> {
-        let next = self.advance_without_flag();
+        let node = self.advance_without_flags()
+            .update_last_token_end(self);
         self.did_advance = true;
-        next
+
+        node
     }
 
     fn advance_until_core_loop<const N: usize>(
         &mut self,
         allow_list: &TokenKindList<N>,
-        block_delimiters: &LazyLock<HashSet<TokenKind>>,
+        construct_delimiters: &LazyLock<HashSet<TokenKind>>,
         span_start: usize, mut span_end: usize
     ) -> Option<SymResult<Node<'a>>> {
         loop {
@@ -324,7 +342,7 @@ impl<'a> Parser<'a> {
 
                         break Some(Ok(node))
 
-                    } else if block_delimiters.contains(token_kind) {
+                    } else if construct_delimiters.contains(token_kind) {
                         // Pushes an error for all of the previous error nodes.
                         self.ast_errors.push(
                             ParseError::UnexpectedTokens {
@@ -360,11 +378,11 @@ impl<'a> Parser<'a> {
     fn advance_until_without_flag<const N: usize>(
         &mut self,
         allow_list: &TokenKindList<N>,
-        block_delimiters: &LazyLock<HashSet<TokenKind>>
+        construct_delimiters: &LazyLock<HashSet<TokenKind>>
     ) -> Option<SymResult<Node<'a>>> {
         match self.next_node() {
             Some(Node { token: SpannedToken (span_start, Token::Error, span_end), .. }) => {
-                self.advance_until_core_loop(allow_list, block_delimiters, span_start, span_end)
+                self.advance_until_core_loop(allow_list, construct_delimiters, span_start, span_end)
             },
 
             Some(node) => {
@@ -378,7 +396,7 @@ impl<'a> Parser<'a> {
 
                     Some(Ok(node))
 
-                } else if block_delimiters.contains(token_kind) {
+                } else if construct_delimiters.contains(token_kind) {
                     self.ast_errors.push(
                         ParseError::MissingToken { 
                             msg: allow_list.to_string().as_deref().map(|x| ParseErrorMessage::Expected(x))
@@ -389,7 +407,7 @@ impl<'a> Parser<'a> {
                     Some(Err(node))
 
                 } else {
-                    self.advance_until_core_loop(allow_list, block_delimiters, token.start(), token.end())
+                    self.advance_until_core_loop(allow_list, construct_delimiters, token.start(), token.end())
                 }
             },
 
@@ -413,9 +431,9 @@ impl<'a> Parser<'a> {
     fn advance_until<const N: usize>(
         &mut self,
         allow_list: &TokenKindList<N>,
-        block_delimiters: &LazyLock<HashSet<TokenKind>>
+        construct_delimiters: &LazyLock<HashSet<TokenKind>>
     ) -> Option<SymResult<Node<'a>>> {
-        let next = self.advance_until_without_flag(allow_list, block_delimiters);
+        let next = self.advance_until_without_flag(allow_list, construct_delimiters);
         self.did_advance = true;
         next
     }
@@ -424,11 +442,11 @@ impl<'a> Parser<'a> {
         &mut self,
         node: Node<'a>,
         allow_list: &TokenKindList<N>,
-        block_delimiters: &LazyLock<HashSet<TokenKind>>
+        construct_delimiters: &LazyLock<HashSet<TokenKind>>
     ) -> Option<SymResult<Node<'a>>> {
         if allow_list.has_discriminant(&node.token.value().discriminant()) { return Some(Ok(node)) };
 
-        if block_delimiters.contains(&node.token.value().kind()) {
+        if construct_delimiters.contains(&node.token.value().kind()) {
             // Pushes an error for the previous error node.
             self.ast_errors.push(
                 ParseError::MissingToken {
@@ -444,7 +462,7 @@ impl<'a> Parser<'a> {
 
         match self.next_node() {
             Some(Node { token: SpannedToken (_, Token::Error, span_end), .. }) => {
-                self.advance_until_core_loop(allow_list, block_delimiters, last_token.start(), span_end)
+                self.advance_until_core_loop(allow_list, construct_delimiters, last_token.start(), span_end)
             },
 
             Some(node) => {
@@ -464,7 +482,7 @@ impl<'a> Parser<'a> {
 
                     Some(Ok(node))
 
-                } else if block_delimiters.contains(token_kind) {
+                } else if construct_delimiters.contains(token_kind) {
                     // Pushes an error for the previous error node.
                     self.ast_errors.push(
                         ParseError::UnexpectedTokens {
@@ -476,7 +494,7 @@ impl<'a> Parser<'a> {
                     Some(Err(node))
 
                 } else {
-                    self.advance_until_core_loop(allow_list, block_delimiters, last_token.start(), token.end())
+                    self.advance_until_core_loop(allow_list, construct_delimiters, last_token.start(), token.end())
                 }
             },
 
@@ -501,10 +519,10 @@ impl<'a> Parser<'a> {
         &mut self,
         node: Option<Node<'a>>,
         allow_list: &TokenKindList<N>,
-        block_delimiters: &LazyLock<HashSet<TokenKind>>
+        construct_delimiters: &LazyLock<HashSet<TokenKind>>
     ) -> Option<SymResult<Node<'a>>> {
         match node {
-            Some(node) => self.node_is_kind_else_advance_until(node, allow_list, block_delimiters),
+            Some(node) => self.node_is_kind_else_advance_until(node, allow_list, construct_delimiters),
 
             None => {
                 self.ast_errors.push(
@@ -522,18 +540,17 @@ impl<'a> Parser<'a> {
     fn parse_datatype(
         &mut self,
         node: Option<Node<'a>>,
-        block_delimiters: LazyLock<HashSet<TokenKind>>
+        construct_delimiters: LazyLock<HashSet<TokenKind>>
     ) -> (NodeStatus<'a>, Option<Construct<'a>>) {
-        let (node_status, construct) = self.parse_datatype_part(node, &block_delimiters);
+        let (node_status, construct) = self.parse_datatype_part(node, &construct_delimiters);
 
         if let Some(construct) = construct {
-            let middle_node = node_status.consume_err_or_advance(self);
+            let middle_node = match node_status {
+                NodeStatus::Exists => self.advance(),
+                NodeStatus::None | NodeStatus::Err(_) => return (node_status, Some(construct)),
+            };
 
             if let Some(some_middle_node) = middle_node {
-                if node_token_matches!(some_middle_node, SemiColon) {
-                    return (some_middle_node.to_status(), Some(construct))
-                }
-
                 if let Some(precedence) = TOKEN_KIND_OPERATOR_PRECEDENCE.get(&some_middle_node.token.value().kind()) {
                     // We are parsing an operation.
 
@@ -554,19 +571,19 @@ impl<'a> Parser<'a> {
                     self.parse_datatype_operation(
                         right_node, construct,
                         *precedence, operators,
-                        &block_delimiters
+                        &construct_delimiters
                     )
 
                 } else { (some_middle_node.to_status(), Some(construct)) }
 
             } else { (middle_node.to_status(), Some(construct)) }
 
-        } else { (node_status, construct) }
+        } else { (node_status, None) }
     }
 
     fn parse_datatype_part(
         &mut self, node: Option<Node<'a>>,
-        block_delimiters: &LazyLock<HashSet<TokenKind>>
+        construct_delimiters: &LazyLock<HashSet<TokenKind>>
     ) -> (NodeStatus<'a>, Option<Construct<'a>>) {
         let node = guarded_unwrap_advance!(
             self.optional_node_is_kind_else_advance_until(
@@ -578,7 +595,7 @@ impl<'a> Parser<'a> {
                     ParensOpen, EnumKeyword, StateSelectorOrEnumPart,
                     MacroCallIdentifier
                 ]),
-                block_delimiters
+                construct_delimiters
             ),
             return (NodeStatus::.., None)
         );
@@ -638,20 +655,19 @@ impl<'a> Parser<'a> {
         last_datatype: Construct<'a>,
         last_precedence: usize,
         last_operators: Vec<Node<'a>>,
-        block_delimiters: &LazyLock<HashSet<TokenKind>>
+        construct_delimiters: &LazyLock<HashSet<TokenKind>>
     ) -> (NodeStatus<'a>, Option<Construct<'a>>) {
-        let (node_status, construct) = self.parse_datatype_part(node, block_delimiters);
+        let (node_status, construct) = self.parse_datatype_part(node, construct_delimiters);
 
         if let Some(construct) = construct {
-            let middle_node = node_status.consume_err_or_advance(self);
+            let middle_node = match node_status {
+                NodeStatus::Exists => self.advance(),
+                NodeStatus::None | NodeStatus::Err(_) => return (node_status, Some(Construct::MathOperation {
+                    left: Box::new(last_datatype), operators: last_operators, right: Some(Box::new(construct))
+                })),
+            };
 
             if let Some(some_middle_node) = middle_node {
-                if node_token_matches!(some_middle_node, SemiColon) {
-                    return (some_middle_node.to_status(), Some(Construct::MathOperation {
-                        left: Box::new(last_datatype), operators: last_operators, right: Some(Box::new(construct))
-                    }))
-                }
-
                 if let Some(precedence) = TOKEN_KIND_OPERATOR_PRECEDENCE.get(&some_middle_node.token.value().kind()) {
                     // We are parsing an operation.
 
@@ -693,7 +709,7 @@ impl<'a> Parser<'a> {
                         let (node_status, construct) = self.parse_datatype_operation(
                             right_node, construct,
                             *precedence, operators,
-                            block_delimiters
+                            construct_delimiters
                         );
 
                         return (node_status, Some(Construct::MathOperation {
@@ -711,7 +727,7 @@ impl<'a> Parser<'a> {
                                 right: Some(Box::new(construct))
                             },
                             *precedence, operators,
-                            block_delimiters
+                            construct_delimiters
                         )
                     }
 
@@ -766,7 +782,7 @@ impl<'a> Parser<'a> {
 
                         Some(Err(next_node))
 
-                    } else if TOKEN_KIND_INSIDE_PARENS_BLOCK_DELIMITERS.contains(&next_token_value.kind()) {
+                    } else if TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS.contains(&next_token_value.kind()) {
                         Some(Err(next_node))
 
                     } else {
@@ -793,7 +809,7 @@ impl<'a> Parser<'a> {
             },
 
             token => {
-                if TOKEN_KIND_INSIDE_PARENS_BLOCK_DELIMITERS.contains(&token.kind()) {
+                if TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS.contains(&token.kind()) {
                     datatype_groups.push(datatype_group);
 
                     Some(Err(this_node))
@@ -815,7 +831,7 @@ impl<'a> Parser<'a> {
 
     fn parse_table_datatype_args(&mut self, mut node: Option<Node<'a>>) -> (Option<Node<'a>>, Option<Vec<Construct<'a>>>) {
         let (this_node_status, datatype_group) =
-            self.parse_datatype(node, TOKEN_KIND_INSIDE_PARENS_BLOCK_DELIMITERS);
+            self.parse_datatype(node, TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS);
 
         if let Some(datatype_group) = datatype_group {
             let mut datatype_groups = vec![];
@@ -829,7 +845,7 @@ impl<'a> Parser<'a> {
 
             loop {
                 let (this_node_status, datatype_group) =
-                    self.parse_datatype(node, TOKEN_KIND_INSIDE_PARENS_BLOCK_DELIMITERS);
+                    self.parse_datatype(node, TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS);
 
                 let this_node = this_node_status.consume_err_or_advance(self);
                 node = if let Some(datatype_group) = datatype_group {
@@ -853,7 +869,7 @@ impl<'a> Parser<'a> {
                     body: Delimited::new(table_open_node, None, Some(node))
                 }))
 
-            } else if TOKEN_KIND_INSIDE_PARENS_BLOCK_DELIMITERS.contains(&token_value.kind()) {
+            } else if TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS.contains(&token_value.kind()) {
                 self.ast_errors.push(
                     ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ParensClose.name())) },
                     self.range_from_span(clamp_span_to_end(table_open_node.token.end()))
@@ -935,7 +951,7 @@ impl<'a> Parser<'a> {
                     body: Some(Delimited::new(table_open_node, None, Some(node)))
                 }))
 
-            } else if TOKEN_KIND_INSIDE_PARENS_BLOCK_DELIMITERS.contains(&token_value.kind()) {
+            } else if TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS.contains(&token_value.kind()) {
                 self.ast_errors.push(
                     ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ParensClose.name())) },
                     self.range_from_span(clamp_span_to_end(table_open_node.token.end()))
@@ -987,7 +1003,7 @@ impl<'a> Parser<'a> {
         let name_node = guarded_unwrap_advance!(
             self.advance_until(
                 token_kind_list!("enum part", [ StateSelectorOrEnumPart, TagSelectorOrEnumPart ]),
-                &TOKEN_KIND_BLOCK_DELIMITERS
+                &TOKEN_KIND_CONSTRUCT_DELIMITERS
             ),
             return (NodeStatus::.., Some(Construct::Enum {
                 keyword: keyword_node, name: None, variant: None
@@ -997,7 +1013,7 @@ impl<'a> Parser<'a> {
         let variant_node = guarded_unwrap_advance!(
             self.advance_until(
                 token_kind_list!("enum part", [ StateSelectorOrEnumPart, TagSelectorOrEnumPart ]),
-                &TOKEN_KIND_BLOCK_DELIMITERS
+                &TOKEN_KIND_CONSTRUCT_DELIMITERS
             ),
             return (NodeStatus::.., Some(Construct::Enum {
                 keyword: keyword_node, name: Some(name_node), variant: None
@@ -1009,21 +1025,30 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_derive(&mut self, node: Node<'a>) -> Parsed<'a> {
-        if !matches!(node.token.value(), Token::DeriveDeclaration) { return Parsed (Some(node), None) }
+    /// Many declarations in rsml just have a datatype after them.
+    /// So we can use the same function to parse them.
+    fn parse_declaration_with_datatype(
+        &mut self,
+        node: Node<'a>,
+        declaration_token_kind: TokenKind,
+        constructor: fn(declaration: Node<'a>, body: Option<Box<Construct<'a>>>, terminator: Option<Node<'a>>) -> Construct<'a>
+    ) -> Parsed<'a> {
+        if node.token.value().kind() != declaration_token_kind { return Parsed (Some(node), None) }
         let declaration_node = node;
 
-        let node = self.advance();
+        let node = self.advance_without_flags();
+        self.did_advance = true;
+
         let (node_status, body_nodes) =
-            self.parse_datatype(node, TOKEN_KIND_BLOCK_DELIMITERS);
+            self.parse_datatype(node, TOKEN_KIND_CONSTRUCT_DELIMITERS);
         let body_nodes = body_nodes.map(|x| Box::new(x));
 
         let terminator = match node_status {
             NodeStatus::Exists => guarded_unwrap_advance!(
-                self.advance_until(token_kind_list![ SemiColon ], &TOKEN_KIND_BLOCK_DELIMITERS),
-                return Parsed (.., Some(Construct::Derive {
-                    declaration: declaration_node, body: body_nodes, terminator: None
-                }))
+                self.advance_until(token_kind_list![ SemiColon ], &TOKEN_KIND_CONSTRUCT_DELIMITERS),
+                return Parsed (.., Some(constructor(
+                    declaration_node, body_nodes, None
+                )))
             ),
 
             NodeStatus::Err(node) => {
@@ -1031,9 +1056,9 @@ impl<'a> Parser<'a> {
                     node
 
                 } else {
-                    let construct = Construct::Derive {
-                        declaration: declaration_node, body: body_nodes, terminator: None
-                    };
+                    let construct = constructor(
+                        declaration_node, body_nodes, None
+                    );
 
                     self.ast_errors.push(
                         ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::SemiColon.name())) },
@@ -1045,9 +1070,9 @@ impl<'a> Parser<'a> {
             },
 
             NodeStatus::None => {
-                let construct = Construct::Derive {
-                    declaration: declaration_node, body: body_nodes, terminator: None
-                };
+                let construct = constructor(
+                    declaration_node, body_nodes, None
+                );
 
                 self.ast_errors.push(
                     ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::SemiColon.name())) },
@@ -1058,9 +1083,45 @@ impl<'a> Parser<'a> {
             }
         };
 
-        Parsed (self.advance(), Some(Construct::Derive {
-            declaration: declaration_node, body: body_nodes, terminator: Some(terminator)
-        }))
+        Parsed (self.advance(), Some(constructor(
+            declaration_node, body_nodes, Some(terminator)
+        )))
+    }
+
+    fn parse_derive(
+        &mut self, node: Node<'a>
+    ) -> Parsed<'a> {
+        self.parse_declaration_with_datatype(
+            node,
+            TokenKind::DeriveDeclaration,
+            |declaration, body, terminator| {
+                Construct::Derive { declaration, body, terminator }
+            }
+        )
+    }
+
+    fn parse_priority(
+        &mut self, node: Node<'a>
+    ) -> Parsed<'a> {
+        self.parse_declaration_with_datatype(
+            node,
+            TokenKind::PriorityDeclaration,
+            |declaration, body, terminator| {
+                Construct::Priority { declaration, body, terminator }
+            }
+        )
+    }
+
+    fn parse_name(
+        &mut self, node: Node<'a>
+    ) -> Parsed<'a> {
+        self.parse_declaration_with_datatype(
+            node,
+            TokenKind::NameDeclaration,
+            |declaration, body, terminator| {
+                Construct::Name { declaration, body, terminator }
+            }
+        )
     }
 
     // TODO: properly implement macros.
@@ -1074,7 +1135,7 @@ impl<'a> Parser<'a> {
 
     fn parse_macro_call_body(&mut self, name_node: Node<'a>) -> Parsed<'a> {
         let open_node = guarded_unwrap_advance!(
-            self.advance_until(token_kind_list![ ParensOpen ], &TOKEN_KIND_BLOCK_DELIMITERS),
+            self.advance_until(token_kind_list![ ParensOpen ], &TOKEN_KIND_CONSTRUCT_DELIMITERS),
             return Parsed (.., Some(Construct::MacroCall { name: name_node, body: None }))
         );
 
@@ -1121,13 +1182,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_macro(&mut self, node: Node<'a>) -> Parsed<'a> {
-        if !matches!(node.token.value(), Token::MacroDeclaration) { return Parsed (Some(node), None) }
+        if !node_token_matches!(node, MacroDeclaration) { return Parsed (Some(node), None) }
 
         let declaration_node = node;
 
         let name_node = match self.advance_until(
             token_kind_list!("macro name", [ Identifier ]),
-            &TOKEN_KIND_BLOCK_DELIMITERS
+            &TOKEN_KIND_CONSTRUCT_DELIMITERS
         ) {
             Some(Ok(node)) => Some(node),
             Some(Err(node)) => {
@@ -1143,7 +1204,7 @@ impl<'a> Parser<'a> {
         let args_or_body_node = guarded_unwrap_advance!(
             self.advance_until(
                 token_kind_list!("macro arguments or body", [ ScopeOpen, ParensOpen ]),
-                &TOKEN_KIND_BLOCK_DELIMITERS
+                &TOKEN_KIND_CONSTRUCT_DELIMITERS
             ),
             return Parsed (.., Some(
                 Construct::Macro { declaration: declaration_node, name: name_node, args: None, body: None }
@@ -1167,7 +1228,7 @@ impl<'a> Parser<'a> {
         let mut node = guarded_unwrap_advance!(
             self.advance_until(token_kind_list![
                 MacroArgIdentifier, Comma, ParensClose
-            ], &TOKEN_KIND_INSIDE_PARENS_BLOCK_DELIMITERS),
+            ], &TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS),
             return Parsed (.., Some(
                 Construct::Macro {
                     declaration: declaration_node,
@@ -1193,11 +1254,11 @@ impl<'a> Parser<'a> {
             let advance_until_result = match last_token_value {
                 Token::Comma => self.advance_until(token_kind_list![
                     MacroArgIdentifier, ParensClose
-                ], &TOKEN_KIND_INSIDE_PARENS_BLOCK_DELIMITERS),
+                ], &TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS),
 
                 _ => self.advance_until(token_kind_list![
                     MacroArgIdentifier, Comma, ParensClose
-                ], &TOKEN_KIND_INSIDE_PARENS_BLOCK_DELIMITERS)
+                ], &TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS)
             };
 
             node = guarded_unwrap_advance!(advance_until_result,
@@ -1244,7 +1305,7 @@ impl<'a> Parser<'a> {
         args_close_node: Option<Node<'a>>,
     ) -> Parsed<'a> {
         let body_node = guarded_unwrap_advance!(
-            self.advance_until(token_kind_list![ ScopeOpen ], &TOKEN_KIND_BLOCK_DELIMITERS),
+            self.advance_until(token_kind_list![ ScopeOpen ], &TOKEN_KIND_CONSTRUCT_DELIMITERS),
             return Parsed (.., Some(
                 Construct::Macro {
                     declaration: declaration_node,
@@ -1283,7 +1344,7 @@ impl<'a> Parser<'a> {
             }))
         });
 
-        if matches!(node.token.value(), Token::ScopeClose) {
+        if node_token_matches!(node, ScopeClose) {
             return Parsed (self.advance(), Some(Construct::Macro {
                 declaration: declaration_node,
                 name: name_node,
@@ -1306,6 +1367,9 @@ impl<'a> Parser<'a> {
                     &mut body_content, &mut parser.ast_errors, &parser.lexer.rope, Some("non-global scopes")
                 )?;
 
+                node = parser.parse_priority(node).handle_construct(&mut body_content)?;
+                node = parser.parse_name(node).handle_construct(&mut body_content)?;
+
                 node = parser.parse_static_token_assignment(node).handle_construct(&mut body_content)?;
                 node = parser.parse_token_assignment(node).handle_construct(&mut body_content)?;
 
@@ -1315,7 +1379,7 @@ impl<'a> Parser<'a> {
                 node = parser.parse_invalid_declaration(node)?;
                 node = parser.parse_none(node).handle_construct(&mut body_content)?;
 
-                let end_parsing = matches!(node.token.value(), Token::ScopeClose);
+                let end_parsing = node_token_matches!(node, ScopeClose);
                 Some((node, end_parsing))
             });
 
@@ -1366,27 +1430,29 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_none(&mut self, node: Node<'a>) -> Parsed<'a> {
-        if !matches!(node.token.value(), Token::None) { return Parsed (Some(node), None) };
+        if !node_token_matches!(node, None) { return Parsed (Some(node), None) };
 
         Parsed (self.advance(), Some(Construct::None { node }))
     }
 
     fn parse_assignment(&mut self, node: Node<'a>) -> Parsed<'a> {
         let middle_node = guarded_unwrap_advance!(
-            self.advance_until(token_kind_list![ Equals ], &TOKEN_KIND_BLOCK_DELIMITERS),
+            self.advance_until(token_kind_list![ Equals ], &TOKEN_KIND_CONSTRUCT_DELIMITERS),
             return Parsed (.., None)
         );
 
         let left_node = node;
 
-        let node = self.advance();
+        let node = self.advance_without_flags();
+        self.did_advance = true;
+
         let (node_status, body_nodes) =
-            self.parse_datatype(node, TOKEN_KIND_BLOCK_DELIMITERS);
+            self.parse_datatype(node, TOKEN_KIND_CONSTRUCT_DELIMITERS);
         let body_nodes = body_nodes.map(|x| Box::new(x));
 
         let terminator = match node_status {
             NodeStatus::Exists => guarded_unwrap_advance!(
-                self.advance_until(token_kind_list![ SemiColon ], &TOKEN_KIND_BLOCK_DELIMITERS),
+                self.advance_until(token_kind_list![ SemiColon ], &TOKEN_KIND_CONSTRUCT_DELIMITERS),
                 return Parsed (.., Some(Construct::Assignment {
                     left: left_node, middle: Some(middle_node), right: body_nodes, terminator: None
                 }))
@@ -1430,17 +1496,17 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_static_token_assignment(&mut self, node: Node<'a>) -> Parsed<'a> {
-        if !matches!(node.token.value(), Token::StaticTokenIdentifier(_)) { return Parsed (Some(node), None) };
+        if !node_token_matches!(node, StaticTokenIdentifier(_)) { return Parsed (Some(node), None) };
         self.parse_assignment(node)
     }
 
     fn parse_token_assignment(&mut self, node: Node<'a>) -> Parsed<'a> {
-        if !matches!(node.token.value(), Token::TokenIdentifier(_)) { return Parsed (Some(node), None) };
+        if !node_token_matches!(node, TokenIdentifier(_)) { return Parsed (Some(node), None) };
         self.parse_assignment(node)
     }
 
     fn parse_property_assignment_or_rule_scope(&mut self, node: Node<'a>) -> Parsed<'a> {
-        if !matches!(node.token.value(), Token::Identifier(_)) { return Parsed (Some(node), None) };
+        if !node_token_matches!(node, Identifier(_)) { return Parsed (Some(node), None) };
         
         let middle_node = match self.advance_until(
             &token_kind_list!(
@@ -1450,7 +1516,7 @@ impl<'a> Parser<'a> {
                     PseudoSelector, Comma, ChildrenSelector, DescendantsSelector
                 ]
             ),
-            &TOKEN_KIND_BLOCK_DELIMITERS
+            &TOKEN_KIND_CONSTRUCT_DELIMITERS
         ) {
             Some(Ok(node)) => node,
             Some(Err(node)) => return Parsed (Some(node), None),
@@ -1478,14 +1544,16 @@ impl<'a> Parser<'a> {
 
         let left_node = node;
 
-        let node = self.advance();
+        let node = self.advance_without_flags();
+        self.did_advance = true;
+
         let (node_status, body_nodes) =
-            self.parse_datatype(node, TOKEN_KIND_BLOCK_DELIMITERS);
+            self.parse_datatype(node, TOKEN_KIND_CONSTRUCT_DELIMITERS);
         let body_nodes = body_nodes.map(|x| Box::new(x));
 
         let terminator = match node_status {
             NodeStatus::Exists => guarded_unwrap_advance!(
-                self.advance_until(token_kind_list![ SemiColon ], &TOKEN_KIND_BLOCK_DELIMITERS),
+                self.advance_until(token_kind_list![ SemiColon ], &TOKEN_KIND_CONSTRUCT_DELIMITERS),
                 return Parsed (.., Some(Construct::Assignment {
                     left: left_node, middle: Some(middle_node), right: body_nodes, terminator: None
                 }))
@@ -1551,12 +1619,12 @@ impl<'a> Parser<'a> {
             self.advance_until(token_kind_list!("selector part or \"{\"", [
                 Identifier, NameSelector, TagSelectorOrEnumPart, StateSelectorOrEnumPart, PseudoSelector,
                 ChildrenSelector, DescendantsSelector, ScopeOpen
-            ]), &TOKEN_KIND_BLOCK_DELIMITERS), return Parsed (.., None)
+            ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS), return Parsed (.., None)
         );
 
         self.handle_hierarchy_selector_without_part(&last_token, &node.token);
 
-        if matches!(node.token.value(), Token::ScopeOpen) {
+        if node_token_matches!(node, ScopeOpen) {
             // Pushes an error for a trailing comma.
             if matches!(last_token.value(), Token::Comma) {
                 self.ast_errors.push(
@@ -1581,12 +1649,12 @@ impl<'a> Parser<'a> {
             self.advance_until(token_kind_list!("selector part or \"{\"", [
                 Identifier, NameSelector, TagSelectorOrEnumPart, StateSelectorOrEnumPart, PseudoSelector,
                 ChildrenSelector, DescendantsSelector, ScopeOpen, Comma
-            ]), &TOKEN_KIND_BLOCK_DELIMITERS), return Parsed (.., None)
+            ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS), return Parsed (.., None)
         );
 
         self.handle_hierarchy_selector_without_part(&last_token, &node.token);
 
-        if matches!(node.token.value(), Token::ScopeOpen) { return self.parse_rule_scope_body(node, Some(selectors)) }
+        if node_token_matches!(node, ScopeOpen) { return self.parse_rule_scope_body(node, Some(selectors)) }
 
         let token = node.token.clone();
         selectors.push(node);
@@ -1625,7 +1693,7 @@ impl<'a> Parser<'a> {
             }))
         });
 
-        if matches!(node.token.value(), Token::ScopeClose) {
+        if node_token_matches!(node, ScopeClose) {
             return Parsed (self.advance(), Some(Construct::Rule {
                 selectors,
                 body: Delimited::new(body_open_node, None, Some(node))
@@ -1646,6 +1714,9 @@ impl<'a> Parser<'a> {
                     &mut body_content, &mut parser.ast_errors, &parser.lexer.rope, Some("non-global scopes")
                 )?;
 
+                node = parser.parse_priority(node).handle_construct(&mut body_content)?;
+                node = parser.parse_name(node).handle_construct(&mut body_content)?;
+
                 node = parser.parse_static_token_assignment(node).handle_construct(&mut body_content)?;
 
                 node = parser.parse_token_assignment(node).handle_construct(&mut body_content)?;
@@ -1656,7 +1727,7 @@ impl<'a> Parser<'a> {
                 node = parser.parse_invalid_declaration(node)?;
                 node = parser.parse_none(node).handle_construct(&mut body_content)?;
 
-                let end_parsing = matches!(node.token.value(), Token::ScopeClose);
+                let end_parsing = node_token_matches!(node, ScopeClose);
                 Some((node, end_parsing))
             });
 
@@ -1683,7 +1754,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_loop<F: Fn(&mut Self, Node<'a>) -> Option<Node<'a>>>(&mut self, routine: F) -> Option<Node<'a>> {
-        let mut node = self.advance_without_flag()?;
+        let mut node = self.advance_without_flags()
+            .update_last_token_end(self)?;
         let token = &node.token;
 
         let mut error_span: Option<(usize, usize)> = 
@@ -1715,7 +1787,11 @@ impl<'a> Parser<'a> {
                     error_span = Some((token.start(), token.end()))
                 }
                 
-                node = guarded_unwrap!(self.advance_without_flag(), break)
+                node = guarded_unwrap!(
+                    self.advance_without_flags()
+                        .update_last_token_end(self),
+                    break
+                )
             }
         }
 
@@ -1786,7 +1862,11 @@ impl<'a> Parser<'a> {
                     error_span = Some((token.start(), token.end()))
                 }
 
-                node = guarded_unwrap!(self.advance_without_flag(), break)
+                node = guarded_unwrap!(
+                    self.advance_without_flags()
+                        .update_last_token_end(self),
+                    break
+                )
             }
         };
 
