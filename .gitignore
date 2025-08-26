@@ -12,7 +12,7 @@
 .DS_STORE
 
 # Test
-**/*.rsml
+/test
 
 # Watch Tool
 /watch/node_modules

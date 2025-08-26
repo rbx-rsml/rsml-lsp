@@ -3,10 +3,7 @@ use std::{collections::HashSet, mem::discriminant, sync::LazyLock};
 use ropey::Rope;
 use tower_lsp::lsp_types::{Diagnostic, NumberOrString, Range};
 
-use crate::{guarded_unwrap, guarded_unwrap_advance, lexer::{Lexer, SpannedToken, Token, TokenKind, DECLARATION_NAMES, TOKEN_KIND_ADD_SUB_PRECEDENCE, TOKEN_KIND_CONSTRUCT_DELIMITERS, TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS, TOKEN_KIND_OPERATOR_PRECEDENCE}, list::{Stringified, TokenKindList}, parser::parse_error::ParseErrorMessage};
-
-mod range_from_span;
-use range_from_span::RangeFromSpan;
+use crate::{guarded_unwrap, guarded_unwrap_advance, lexer::{Lexer, MultilineString, SpannedToken, Token, TokenKind, DECLARATION_NAMES, TOKEN_KIND_ADD_SUB_PRECEDENCE, TOKEN_KIND_CONSTRUCT_DELIMITERS, TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS, TOKEN_KIND_OPERATOR_PRECEDENCE}, list::{Stringified, TokenKindList}, parser::parse_error::ParseErrorMessage, range_from_span::RangeFromSpan};
 
 mod parse_error;
 use parse_error::ParseError;
@@ -27,10 +24,9 @@ type Trivia<'a> = Vec<SpannedToken<'a>>;
 
 #[derive(Debug)]
 pub struct Node<'a> {
-    token: SpannedToken<'a>,
-    leading_trivia: Option<Trivia<'a>>
+    pub token: SpannedToken<'a>,
+    pub leading_trivia: Option<Trivia<'a>>
 }
-
 
 trait UpdateLastTokenEnd {
     fn update_last_token_end(self, parser: &mut Parser) -> Self;
@@ -130,16 +126,10 @@ impl<'a> Parsed<'a> {
 }
 
 macro_rules! token_kind_list {
-    ( $str:literal, [ $( $name:ident ),* ]) => {
+    ($str:literal, [ $( $name:ident ),* ]) => {
         &TokenKindList::new_with_stringified([$(
             (TokenKind::$name, discriminant(&TokenKind::$name))
         ),*], Stringified::Single(String::from($str)))
-    };
-
-    ([ $( $name:ident ),* ]) => {
-        &TokenKindList::new([$(
-            (TokenKind::$name, discriminant(&TokenKind::$name))
-        ),*])
     };
 
     ($( $name:ident ),*) => {
@@ -147,8 +137,13 @@ macro_rules! token_kind_list {
             (TokenKind::$name, discriminant(&TokenKind::$name))
         ),*])
     };
+
+    ([ $( $name:ident ),* ]) => {
+        token_kind_list!($( $name ),*)
+    };
 }
 
+#[macro_export]
 macro_rules! node_token_matches {
     ($node:ident, Some($( $name:ident )|*)) => {
         matches!($node, Some(Node { token: SpannedToken (_, $( Token::$name )|*, _), .. }))
@@ -213,7 +208,7 @@ impl<'a> Parser<'a> {
         parser
     }
 
-    fn range_from_span(&self, span: (usize, usize)) -> Range {
+    pub fn range_from_span(&self, span: (usize, usize)) -> Range {
         Range::from_span(&self.lexer.rope, span)
     }
 
@@ -225,20 +220,28 @@ impl<'a> Parser<'a> {
         self.lexer.slice()
     }
 
+    fn handle_multiline_string_error(
+        &mut self,
+        token: &SpannedToken,
+        expected_nestedness: usize
+    ) {
+        self.ast_errors.push(
+            ParseError::MissingToken {
+                msg: Some(ParseErrorMessage::Expected(&format!("\"]{}]\"", "=".repeat(expected_nestedness))))
+            },
+            self.range_from_span(clamp_span_to_end(token.end()))
+        )
+    }
+
     fn next_node(&mut self) -> Option<Node<'a>> {
         let mut token = self.next_token()?;
 
         match token.value() {
-            Token::CommentMulti(Err(expected)) => {
-                self.ast_errors.push(
-                    ParseError::MissingToken {
-                        msg: Some(ParseErrorMessage::Expected(&format!("\"]{}]\"", "=".repeat(*expected))))
-                    },
-                    self.range_from_span((token.start(), token.end()))
-                )
+            Token::CommentMulti(MultilineString { nestedness: Err(expected_nestedness), .. }) => {
+                self.handle_multiline_string_error(&token, *expected_nestedness)
             },
 
-            Token::CommentSingle | Token::CommentMulti(Ok(_)) => (),
+            Token::CommentSingle(_) | Token::CommentMulti(MultilineString { nestedness: Ok(_), .. }) => (),
 
             _ => return Some(Node {
                 token: token,
@@ -258,18 +261,14 @@ impl<'a> Parser<'a> {
             );
 
             match token.value() {
-                Token::CommentMulti(Err(expected)) => {
-                    self.ast_errors.push(
-                        ParseError::MissingToken {
-                            msg: Some(ParseErrorMessage::Expected(&format!("\"]{}]\"", "=".repeat(*expected))))
-                        },
-                        self.range_from_span((token.start(), token.end()))
-                    );
+                Token::CommentMulti(MultilineString { nestedness: Err(expected_nestedness), .. }) => {
+                    self.handle_multiline_string_error(&token, *expected_nestedness);
 
                     leading_trivia.push(token);
                 },
 
-                Token::CommentSingle | Token::CommentMulti(Ok(_)) => leading_trivia.push(token),
+                Token::CommentSingle(_) | Token::CommentMulti(MultilineString { nestedness: Ok(_), .. }) =>
+                    leading_trivia.push(token),
 
                 _ => return Some(Node {
                     token: token,
@@ -588,11 +587,14 @@ impl<'a> Parser<'a> {
         let node = guarded_unwrap_advance!(
             self.optional_node_is_kind_else_advance_until(
                 node, token_kind_list!("a datatype", [
-                    Identifier, StringMulti, StringSingle,
+                    Identifier, ParensOpen,
+                    StringMulti, StringSingle,
                     Number, NumberScale, NumberOffset,
+                    Boolean, Nil,
                     StaticTokenIdentifier, TokenIdentifier,
                     ColorHex, ColorTailwind, ColorCss, ColorBrick,
-                    ParensOpen, EnumKeyword, StateSelectorOrEnumPart,
+                    RbxAsset, RbxContent,
+                    EnumKeyword, StateSelectorOrEnumPart,
                     MacroCallIdentifier
                 ]),
                 construct_delimiters
@@ -600,7 +602,9 @@ impl<'a> Parser<'a> {
             return (NodeStatus::.., None)
         );
 
-        match node.token.value() {
+        let token = &node.token;
+
+        match token.value() {
             Token::Identifier(_) => self.parse_annotated_table_datatype(node),
 
             Token::ParensOpen => self.parse_table_datatype(node),
@@ -610,6 +614,12 @@ impl<'a> Parser<'a> {
             Token::MacroCallIdentifier(_) => {
                 let Parsed (node, construct) = self.parse_macro_call_body(node);
                 (node.to_status(), construct)
+            },
+
+            Token::StringMulti(MultilineString { nestedness: Err(expected_nestedness), .. }) => {
+                self.handle_multiline_string_error(&token, *expected_nestedness);
+
+                (NodeStatus::Exists, Some(Construct::Node { node }))
             },
 
             _ => (NodeStatus::Exists, Some(Construct::Node { node }))
@@ -1136,7 +1146,7 @@ impl<'a> Parser<'a> {
     fn parse_macro_call_body(&mut self, name_node: Node<'a>) -> Parsed<'a> {
         let open_node = guarded_unwrap_advance!(
             self.advance_until(token_kind_list![ ParensOpen ], &TOKEN_KIND_CONSTRUCT_DELIMITERS),
-            return Parsed (.., Some(Construct::MacroCall { name: name_node, body: None }))
+            return Parsed (.., Some(Construct::MacroCall { name: name_node, body: None, terminator: None }))
         );
 
         let mut body_content: Vec<Construct<'a>> = vec![];
@@ -1160,7 +1170,8 @@ impl<'a> Parser<'a> {
                 None => {
                     let construct = Construct::MacroCall {
                         name: name_node,
-                        body: Some(Delimited::new(open_node, Some(body_content), None))
+                        body: Some(Delimited::new(open_node, Some(body_content), None)),
+                        terminator: None
                     };
 
                     self.ast_errors.push(
@@ -1175,9 +1186,19 @@ impl<'a> Parser<'a> {
             }
         };
 
+        let terminator_node = guarded_unwrap_advance!(
+            self.advance_until(token_kind_list![SemiColon], &TOKEN_KIND_CONSTRUCT_DELIMITERS),
+            return Parsed (.., Some(Construct::MacroCall {
+                name: name_node,
+                body: Some(Delimited::new(open_node, Some(body_content), Some(close_node))),
+                terminator: None
+            }))
+        );
+
         Parsed (self.advance(), Some(Construct::MacroCall {
             name: name_node,
-            body: Some(Delimited::new(open_node, Some(body_content), Some(close_node)))
+            body: Some(Delimited::new(open_node, Some(body_content), Some(close_node))),
+            terminator: Some(terminator_node)
         }))
     }
 
@@ -1619,7 +1640,7 @@ impl<'a> Parser<'a> {
             self.advance_until(token_kind_list!("selector part or \"{\"", [
                 Identifier, NameSelector, TagSelectorOrEnumPart, StateSelectorOrEnumPart, PseudoSelector,
                 ChildrenSelector, DescendantsSelector, ScopeOpen
-            ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS), return Parsed (.., None)
+            ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS), return Parsed (.., Some(Construct::Rule { selectors, body: None }))
         );
 
         self.handle_hierarchy_selector_without_part(&last_token, &node.token);
@@ -1649,7 +1670,7 @@ impl<'a> Parser<'a> {
             self.advance_until(token_kind_list!("selector part or \"{\"", [
                 Identifier, NameSelector, TagSelectorOrEnumPart, StateSelectorOrEnumPart, PseudoSelector,
                 ChildrenSelector, DescendantsSelector, ScopeOpen, Comma
-            ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS), return Parsed (.., None)
+            ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS), return Parsed (.., Some(Construct::Rule { selectors, body: None }))
         );
 
         self.handle_hierarchy_selector_without_part(&last_token, &node.token);
@@ -1687,17 +1708,14 @@ impl<'a> Parser<'a> {
                 ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ScopeClose.name())) },
                 self.range_from_span(clamp_span_to_end(body_open_node.token.end()))
             );
-            Parsed (None, Some(Construct::Rule {
-                selectors,
-                body: Delimited::new(body_open_node, None, None)
-            }))
+            Parsed (None, Some(Construct::rule(selectors, Delimited::new(body_open_node, None, None))))
         });
 
         if node_token_matches!(node, ScopeClose) {
-            return Parsed (self.advance(), Some(Construct::Rule {
+            return Parsed (self.advance(), Some(Construct::rule(
                 selectors,
-                body: Delimited::new(body_open_node, None, Some(node))
-            }))
+                Delimited::new(body_open_node, None, Some(node))
+            )))
         }
 
         let mut body_content: Vec<Construct<'a>> = vec![];
@@ -1732,17 +1750,17 @@ impl<'a> Parser<'a> {
             });
 
         if matches!(parse_ended_reason, ParseEndedReason::Manual) {
-            return Parsed (self.advance(), Some(Construct::Rule {
+            return Parsed (self.advance(), Some(Construct::rule(
                 selectors,
-                body: Delimited::new(body_open_node, Some(body_content), node)
-            }))
+                Delimited::new(body_open_node, Some(body_content), node)
+            )))
 
         // We push an error as there is no closing curly brace.
         } else {
-            let construct = Construct::Rule {
+            let construct = Construct::rule(
                 selectors,
-                body: Delimited::new(body_open_node, Some(body_content), None)
-            };
+                Delimited::new(body_open_node, Some(body_content), None)
+            );
 
             self.ast_errors.push(
                 ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ScopeClose.name())) },
@@ -1897,7 +1915,8 @@ pub enum Construct<'a> {
 
     MacroCall {
         name: Node<'a>,
-        body: Option<Delimited<'a>>
+        body: Option<Delimited<'a>>,
+        terminator: Option<Node<'a>>
     },
 
     Derive {
@@ -1919,7 +1938,11 @@ pub enum Construct<'a> {
     },
 
     Rule {
-        selectors: Option<Vec<Node<'a>>>,
+        selectors: Vec<Node<'a>>,
+        body: Option<Delimited<'a>>
+    },
+
+    RuleNoSelectors {
         body: Delimited<'a>
     },
 
@@ -1957,14 +1980,21 @@ pub enum Construct<'a> {
 }
 
 impl<'a> Construct<'a> {
-    fn name_plural(&self) -> &str {
+    pub fn rule(selectors: Option<Vec<Node<'a>>>, body: Delimited<'a>) -> Self {
+        match selectors {
+            Some(selectors) => Self::Rule { selectors, body: Some(body) },
+            None => Self::RuleNoSelectors { body }
+        }
+    }
+
+    pub fn name_plural(&self) -> &str {
         match self {
             Self::Macro { .. } => "Macros",
             Self::MacroCall { .. } => "Macro calls",
             Self::Derive { .. } => "Derives",
             Self::Priority { .. } => "Priorities",
             Self::Name { .. } => "Names",
-            Self::Rule { .. } => "Rules",
+            Self::Rule { .. } | Self::RuleNoSelectors { .. } => "Rules",
             Self::Assignment { left, .. } => match left.token.value() {
                 Token::Identifier(_) => "Property assignments",
                 Token::StaticTokenIdentifier(_) => "Static token assignments",
@@ -1978,7 +2008,7 @@ impl<'a> Construct<'a> {
         }
     }
 
-    fn start(&self) -> usize {
+    pub fn start(&self) -> usize {
         match self {
             Self::Macro { declaration, .. } => declaration.token.start(),
 
@@ -1989,12 +2019,14 @@ impl<'a> Construct<'a> {
             Self::Name { declaration, .. } => declaration.token.start(),
 
             Self::Rule { selectors, body } => {
-                selectors.as_ref().map(
-                    |x| x.first().map(|x| x.token.start())
-                        .unwrap_or_else(|| body.left.token.start())
-                )
-                    .unwrap_or_else(|| body.left.token.start())
+                selectors.first().map(|x| x.token.start())
+                    .unwrap_or_else(||
+                        body.as_ref().map(|x| x.left.token.start())
+                            .unwrap_or_else(|| 0)
+                    )
             },
+
+            Self::RuleNoSelectors { body } => body.start(),
 
             Self::Assignment { left, .. } => left.token.start(),
 
@@ -2009,7 +2041,7 @@ impl<'a> Construct<'a> {
         }
     }
 
-    fn span(&self) -> (usize, usize) {
+    pub fn span(&self) -> (usize, usize) {
         (self.start(), self.end())
     }
 }
@@ -2028,9 +2060,12 @@ impl<'a> SpanEnd for Construct<'a> {
                     )
             },
 
-            Self::MacroCall { name, body } => {
-                body.as_ref().map(|x| x.end())
-                    .unwrap_or_else(|| name.token.end())
+            Self::MacroCall { name, body, terminator } => {
+                terminator.as_ref().map(|x| x.token.end())
+                    .unwrap_or_else(||
+                        body.as_ref().map(|x| x.end())
+                            .unwrap_or_else(|| name.token.end())
+                    )
             }
 
             Self::Derive { declaration, body, terminator } |
@@ -2045,7 +2080,12 @@ impl<'a> SpanEnd for Construct<'a> {
                     )
             },
 
-            Self::Rule { body, .. } => body.end(),
+            Self::Rule { body, .. } => {
+                body.as_ref().map(|x| x.end())
+                    .unwrap_or_else(|| 0)
+            },
+
+            Self::RuleNoSelectors { body } => body.end(),
 
             Self::Assignment { left, middle, right, terminator } => {
                 terminator.as_ref().map(|x| x.token.end())
@@ -2094,9 +2134,9 @@ enum ParseEndedReason {
 
 #[derive(Debug)]
 pub struct Delimited<'a, T: SpanEnd = Construct<'a>> {
-    left: Node<'a>,
-    content: Option<Vec<T>>,
-    right: Option<Node<'a>>
+    pub left: Node<'a>,
+    pub content: Option<Vec<T>>,
+    pub right: Option<Node<'a>>
 }
 
 impl<'a, T: SpanEnd> Delimited<'a, T> {
@@ -2139,10 +2179,16 @@ trait SpanEnd {
 pub struct AstErrors(pub Vec<Diagnostic>);
 
 impl AstErrors {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self(Vec::new())
     }
+}
 
+trait PushParseError {
+    fn push(&mut self, error: ParseError, range: Range);
+}
+
+impl PushParseError for AstErrors {
     fn push(&mut self, error: ParseError, range: Range) {
         self.0.push(Diagnostic {
             range,

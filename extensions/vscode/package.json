@@ -4,7 +4,7 @@
     "publisher": "rbx-rsml",
     "description": "LSP and syntax highlighter for RSML (Roblox Style Management Language).",
     "icon": "icon.png",
-    "version": "0.1.0",
+    "version": "0.0.0-VERSION-NUMBER-IS-CHANGED-TO-ACTUAL-IN-RELEASE-WORKFLOW",
     "engines": {
         "vscode": "^1.94.0"
     },
@@ -58,6 +58,12 @@
                 "scopes": {
                     "templateType": ["entity.name.selector"]
                 }
+            }
+        ],
+        "commands": [
+            {
+                "command": "rsml.restart",
+                "title": "RSML: Reload Language Server"
             }
         ]
     },

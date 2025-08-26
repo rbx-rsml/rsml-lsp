@@ -26,6 +26,7 @@ const getServerModulePath = (context: ExtensionContext): string | undefined => {
 }
 
 export function activate(context: ExtensionContext) {
+    const outputChannel = vscode.window.createOutputChannel("RSML LSP");
     vscode.window.showInformationMessage("Activated RSML LSP")
 
     let serverModulePath = getServerModulePath(context)
@@ -39,14 +40,25 @@ export function activate(context: ExtensionContext) {
     };
 
     const clientOptions: LanguageClientOptions = {
-        documentSelector: [{ scheme: "file", language: "rsml" }],
+        documentSelector: [
+            { scheme: "file", language: "rsml" }, 
+            { scheme: "file", pattern: "**/luaurc" },
+            { scheme: "file", pattern: "**/*.luaurc" }
+        ],
         synchronize: {
-            fileEvents: workspace.createFileSystemWatcher("**/*.rsml")
+            fileEvents: workspace.createFileSystemWatcher("**/{luaurc,*.luaurc,*.rsml}")
         }
     };
 
     client = new LanguageClient("RsmlLanguageServer", "RSML Language Server", serverOptions, clientOptions);
     client.start();
+
+    context.subscriptions.push(vscode.commands.registerCommand('rsml.restart', async () => {
+        context.subscriptions.forEach(x => x.dispose())
+
+        deactivate()
+        activate(context)
+    }));
 }
 
 export function deactivate(): Thenable<void> | undefined {

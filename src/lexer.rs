@@ -31,7 +31,14 @@ impl<'a> Iterator for Lexer<'a> {
         let (token, span) = guarded_unwrap!(self.token_stream.next(), return None);
     
         match token {
-            Ok(token) => Some(SpannedToken::new(span.start, token, span.end)),
+            Ok(token) => match token {
+                Token::CommentMulti(MultilineString { span, .. }) |
+                Token::StringMulti(MultilineString { span, .. }) =>
+                    Some(SpannedToken::new(span.0, token, span.1)),
+
+                _ => Some(SpannedToken::new(span.start, token, span.end))
+            },
+
             Err(_) => Some(SpannedToken::new(span.start, Token::Error, span.end)),
         }
     }
@@ -77,14 +84,14 @@ fn str_to_option(str: &str) -> Option<&str> {
 #[logos(skip r"[ \t\n\f]+")]
 #[logos(subpattern ident = r"[_A-Za-z][_A-Za-z\d]*|[_A-Za-z]+(-[A-Za-z\d_]+)+")]
 #[logos(subpattern numsect = r"_*[\d]+_*")]
-#[logos(subpattern num = r"((?&numsect)+\.)?(?&numsect)+")]
+#[logos(subpattern num = r"((?&numsect)+\.)?(?&numsect)+|\.(?&numsect)")]
 pub enum Token<'a> {
     #[regex(r"\-\-\[=*\[", priority = 99, callback = |lex| multiline_string_block_callback(lex, 2))]
-    CommentMulti(Result<usize, usize>),
+    CommentMulti(MultilineString<'a>),
 
-    #[regex(r"\-\-[^(\[\[)].*", priority = 1)]
-    #[regex(r"\-\-", priority = 1)]
-    CommentSingle,
+    #[regex(r"\-\-[^(\[\[)].*", priority = 1, callback = |lex| str_to_option(&lex.slice().clip(2, 0)))]
+    #[regex(r"\-\-", priority = 1, callback = |_| None::<&str>)]
+    CommentSingle(Option<&'a str>),
 
     // When adding a new declaration make sure to
     // update the `DECLARATIONS` array located above.
@@ -138,7 +145,7 @@ pub enum Token<'a> {
     #[regex(r":(?&ident)", callback = |lex| str_to_option(&lex.slice()[1..]))]
     StateSelectorOrEnumPart(&'a str),
 
-    #[regex(r"::(?&ident)", callback = |lex| str_to_option(&lex.slice()[1..]))]
+    #[regex(r"::(?&ident)", callback = |lex| str_to_option(&lex.slice()[2..]))]
     PseudoSelector(&'a str),
 
     #[token(">")]
@@ -181,20 +188,27 @@ pub enum Token<'a> {
     OpSub,
 
     #[regex(r"\[=*\[", priority = 98, callback = |lex| multiline_string_block_callback(lex, 0))]
-    StringMulti(Result<usize, usize>),
+    StringMulti(MultilineString<'a>),
 
-    #[regex(r#""[^\"\n\t]*""#)]
-    #[regex(r#"'[^\'\n\t]*'"#)]
+    #[regex(r#""[^\"\n\t]*""#, callback = |lex| lex.slice().clip(1, 1))]
+    #[regex(r#"'[^\'\n\t]*'"#, callback = |lex| lex.slice().clip(1, 1))]
     StringSingle(&'a str),
 
-    #[regex(r"(?&num)", priority = 4)]
+    #[regex(r"(?&num)", priority = 99)]
     Number(&'a str),
 
-    #[regex(r"(?&num)%", priority = 4)]
+    #[regex(r"(?&num)%", priority = 99)]
     NumberScale(&'a str),
 
-    #[regex(r"(?&num)px", priority = 4)]
+    #[regex(r"(?&num)px", priority = 99)]
     NumberOffset(&'a str),
+
+    #[token("true")]
+    #[token("false")]
+    Boolean(&'a str),
+
+    #[token("nil")]
+    Nil,
 
     #[regex(r"(?i)tw:[a-z]+(:\d+)?")]
     ColorTailwind,
@@ -210,6 +224,13 @@ pub enum Token<'a> {
 
     #[regex(r"#[\da-fA-F]+", priority = 99)]
     ColorHex,
+
+    #[regex(r"rbxassetid://\d*")]
+    #[regex(r"(rbxasset|rbxthumb|rbxgameasset|rbxhttp|rbxtemp|https?)://[^) ]*")]
+    RbxAsset,
+
+    #[regex(r"contentid://\d*", priority = 999)]
+    RbxContent,
 
     #[token("Enum")]
     EnumKeyword,
@@ -247,26 +268,56 @@ enum MultilineStringToken {
     ExitMultilineString,
 }
 
-fn multiline_string_block_callback<'a>(lexer: &mut LogosLexer<'a, Token<'a>>, sub_amount: usize) -> Result<usize, usize> {
+#[derive(Clone, Debug, PartialEq)]
+pub struct MultilineString<'a> {
+    pub nestedness: Result<usize, usize>,
+    pub content: &'a str,
+    pub span: (usize, usize)
+}
+
+fn multiline_string_block_callback<'a>(lexer: &mut LogosLexer<'a, Token<'a>>, sub_amount: usize) -> MultilineString<'a> {
     let mut sub_lexer = lexer.clone().morph::<MultilineStringToken>();
 
-    let start_token_len = sub_lexer.slice().len() - sub_amount;
+    // Subtracts by `sub_amount` to account for leading characters (typically `--` for multi-line comments).
+    // Subtracts by 2 to account for `[` either side of the equal signs.
+    let open_nestedness = sub_lexer.slice().len() - sub_amount - 2;
+    let open_span_start = sub_lexer.span().start;
+
+    let content_span_start = open_span_start + 2;
 
     while let Some(token) = sub_lexer.next() {
         match token {
             Ok(MultilineStringToken::ExitMultilineString) => {
-                if start_token_len == sub_lexer.slice().len() {
+                let close_span = sub_lexer.span();
+                // Subtracts by 2 to account for `]` either side of the equal signs.
+                let close_nestedness = sub_lexer.slice().len() - 2;
+                
+
+                if open_nestedness == close_nestedness {
+                    let data = MultilineString {
+                        nestedness: Ok(open_nestedness),
+                        content: &sub_lexer.source()[content_span_start..close_span.start],
+                        span: (open_span_start, close_span.end)
+                    };
+
                     *lexer = sub_lexer.morph();
 
-                    return Ok(start_token_len - 2);
+                    return data;
                 }
             },
             _ => {},
         }
     }
 
+    let data = MultilineString {
+        nestedness: Err(open_nestedness),
+        content: sub_lexer.source().clip(content_span_start, 0),
+        span: (open_span_start, sub_lexer.source().len())
+    };
+
     *lexer = sub_lexer.morph();
-    Err(start_token_len - 2)
+
+    data
 }
 
 pub const TOKEN_KIND_CONSTRUCT_DELIMITERS: LazyLock<HashSet<TokenKind>> = lazy_collection! {
