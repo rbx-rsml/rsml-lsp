@@ -1,9 +1,10 @@
 #![feature(generic_const_exprs)]
+#![feature(iter_intersperse)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashSet, VecDeque};
 use std::ffi::OsStr;
-use std::ops::{Deref, DerefMut};
-use std::path::{PathBuf};
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 
 use ropey::Rope;
@@ -11,8 +12,8 @@ use serde_json::Value;
 use tokio::fs;
 use tokio::sync::{Mutex, MutexGuard};
 use tower_lsp::jsonrpc::Result as LspResult;
-use tower_lsp::lsp_types::notification::{ShowMessage};
-use tower_lsp::lsp_types::{CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionProviderCapability, CodeActionResponse, DidChangeWatchedFilesRegistrationOptions, FileChangeType, FileSystemWatcher, GlobPattern, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, LocationLink, MarkedString, MessageType, OneOf, Position, Range, Registration, RelativePattern, ServerCapabilities, ShowMessageParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url, WatchKind, WorkspaceEdit};
+use tower_lsp::lsp_types::notification::ShowMessage;
+use tower_lsp::lsp_types::{CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionProviderCapability, CodeActionResponse, DeleteFilesParams, DidChangeWatchedFilesRegistrationOptions, DidChangeWorkspaceFoldersParams, FileChangeType, FileOperationFilter, FileOperationPattern, FileOperationRegistrationOptions, FileSystemWatcher, GlobPattern, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, LocationLink, MarkedString, MessageType, OneOf, Position, Range, Registration, RelativePattern, ServerCapabilities, ShowMessageParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url, WatchKind, WorkspaceEdit, WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities};
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 mod lexer;
@@ -22,13 +23,17 @@ mod parser;
 use parser::Parser;
 
 mod typechecker;
-use typechecker::Typechecker;
+use typechecker::{Typechecker, PushTypeError, DefinitionKind};
 
 pub mod range_from_span;
 
+pub mod multibimap;
+
 use crate::lexer::SpannedToken;
+use crate::luaurc::Aliases;
 use crate::range_from_span::RangeFromSpan;
-use crate::typechecker::{DefinitionKind, Definitions};
+use crate::typechecker::{CyclicKind, TypeError};
+use crate::workspaces::Workspace;
 
 mod guarded_unwrap;  
 
@@ -38,6 +43,9 @@ mod luaurc;
 use luaurc::Luaurc;
 
 pub mod normalize_path;
+
+pub mod workspaces;
+use workspaces::{Workspaces, Documents, Document};
 
 mod string_clip {
     pub trait StringClip {
@@ -51,47 +59,10 @@ mod string_clip {
     }
 }
 
-struct Workspaces(HashMap<PathBuf, Arc<Mutex<HashMap<PathBuf, Arc<Mutex<Document>>>>>>);
-
-impl Deref for Workspaces {
-    type Target = HashMap<PathBuf, Arc<Mutex<HashMap<PathBuf, Arc<Mutex<Document>>>>>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Workspaces {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl Workspaces {
-    fn new() -> Self {
-        Self(HashMap::new())
-    }
-
-    fn get_for_path(&self, path: &PathBuf) -> Option<Arc<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<Document>>>>>> {
-        match self.iter().find(|(x, _)| path.starts_with(x)) {
-            Some(workspace) => Some(workspace.1.clone()),
-            None => None
-        }
-    }
-}
-
 struct Backend {
     client: Client,
-    luaurcs: Arc<Mutex<HashMap<PathBuf, Luaurc>>>,
     workspaces: Arc<Mutex<Workspaces>>,
-    has_root: Mutex<bool>
-}
-
-
-struct Document {
-    source: String,
-    dependencies: HashSet<PathBuf>,
-    definitions: Definitions
+    documents: Arc<Mutex<Documents>>
 }
 
 enum Status<T> {
@@ -100,16 +71,18 @@ enum Status<T> {
     None,
 }
 
-impl Document {
-    fn new(source: String) -> Self {
-        Self {
-            source,
-            dependencies: HashSet::new(),
-            definitions: Definitions::new()
+impl<T> Status<T> {
+    pub fn as_deref_mut(&mut self) -> Status<&mut T::Target>
+    where
+        T: std::ops::DerefMut
+    {
+        match self {
+            Status::Some(value) => Status::Some(value.deref_mut()),
+            Status::Unknown => Status::Unknown,
+            Status::None => Status::None,
         }
     }
 }
-
 
 #[macro_export]
 macro_rules! collection {
@@ -139,15 +112,15 @@ macro_rules! lazy_collection {
     }};
 }
 
-async fn resolve_luaurc(path: PathBuf, luaurcs: &mut HashMap<PathBuf, Luaurc>) {
+async fn resolve_luaurc(path: &Path) -> Option<Luaurc> {
     let contents = match fs::read_to_string(path.join("./luaurc")).await {
         Ok(contents) => Ok(contents),
         Err (_) => fs::read_to_string(path.join("./.luaurc")).await
     };
 
     if let Ok(contents) = contents {
-        luaurcs.insert(path, Luaurc::new(&contents));
-    }
+        Some(Luaurc::new(&contents))
+    } else { None }
 }
 
 trait PositionToByteOffset {
@@ -169,12 +142,11 @@ impl PositionToByteOffset for Position {
             }
         }
 
-        // If the position line is beyond the text, use end of text
         if current_line < self.line as usize {
             return text.len();
         }
 
-        // Now calculate the byte offset of the UTF-16 character index
+        // We calculate the byte offset of the character index.
         let mut offset_bytes = line_start;
         let mut utf16_count = 0;
         for (idx, c) in text[line_start..].char_indices() {
@@ -192,34 +164,50 @@ impl PositionToByteOffset for Position {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> tower_lsp::jsonrpc::Result<InitializeResult> {
-        if let Some(folders) = params.workspace_folders {
-            let mut luaurcs = self.luaurcs.lock().await;
+        let mut workspaces = self.workspaces.lock().await;
 
+        if let Some(folders) = params.workspace_folders {
             for folder in folders {
-                if let Ok(path) = folder.uri.to_file_path() {
-                    self.workspaces.lock().await.insert(path.clone(), Arc::new(Mutex::new(HashMap::new())));
-                    resolve_luaurc(path, &mut luaurcs).await;
+                if let Ok(workspace_path) = folder.uri.to_file_path() {
+                    let workspace = Workspace::new(resolve_luaurc(&workspace_path).await);
+                    workspaces.insert(workspace_path.clone(), Arc::new(Mutex::new(workspace)));
                 }
             }
             
         } else if let Some(root_uri) = params.root_uri {
-            let mut luaurcs = self.luaurcs.lock().await;
-            
-            if let Ok(path) = root_uri.to_file_path() {
-                self.workspaces.lock().await.insert(path.clone(), Arc::new(Mutex::new(HashMap::new())));
-                resolve_luaurc(path, &mut luaurcs).await;
+            if let Ok(workspace_path) = root_uri.to_file_path() {
+                let workspace = Workspace::new(resolve_luaurc(&workspace_path).await);
+                workspaces.insert(workspace_path.clone(), Arc::new(Mutex::new(workspace)));
             }
 
-        } else {
-            *self.has_root.lock().await = false;
         }
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+
                 definition_provider: Some(OneOf::Left(true)),
+
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+
+                workspace: Some(WorkspaceServerCapabilities {
+                    file_operations: Some(WorkspaceFileOperationsServerCapabilities {
+                        did_delete: Some(FileOperationRegistrationOptions {
+                            filters: vec![FileOperationFilter {
+                                scheme: Some("file".to_string()),
+                                pattern: FileOperationPattern {
+                                    glob: "**/*.rsml".to_string(),
+                                    matches: None,
+                                    options: None,
+                                },
+                            }],
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
 
                 ..ServerCapabilities::default()
             },
@@ -228,14 +216,14 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: tower_lsp::lsp_types::InitializedParams) {
-        if !*self.has_root.lock().await {
-            self.notify(
-                MessageType::WARNING,
-                format!("Could not resolve root for your workspace(s). `.luaurc`'s aliases may not work properly in derives.")
-            ).await;
-        }
-
         if let Ok(Some(workspace_folders)) = self.client.workspace_folders().await {
+            let workspaces = self.workspaces.lock().await;
+            let mut documents = self.documents.lock().await;
+
+            for workspace_path in workspaces.keys() {
+                self.populate_workspace(workspace_path.clone(), &workspaces, &mut documents).await;
+            }
+
             let registration = Registration {
                 id: "config-watcher".to_string(),
                 method: "workspace/didChangeWatchedFiles".to_string(),
@@ -255,6 +243,12 @@ impl LanguageServer for Backend {
             };
 
             self.client.register_capability(vec![registration]).await.unwrap();
+
+        } else {
+            self.notify(
+                MessageType::WARNING,
+                format!("Could not resolve root for your workspace(s). `.luaurc`'s aliases may not work properly in derives.")
+            ).await;
         }
     }
 
@@ -263,22 +257,69 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: tower_lsp::lsp_types::DidOpenTextDocumentParams) {
-        let mut workspaces = self.workspaces.lock().await;
+        let mut documents = self.documents.lock().await;
 
         let (current_path, document) =
-            self.parse_and_log(&params.text_document.text, params.text_document.uri, Status::Unknown, &mut workspaces).await;
+            self.diagnose_document(
+                &params.text_document.text, params.text_document.uri,
+                Status::Unknown, None, &mut documents, None, None
+            ).await;
 
-        self.commit_document(current_path, document, &mut workspaces).await;
+        self.commit_document(current_path, document, &mut documents).await;
     }
 
     async fn did_change(&self, params: tower_lsp::lsp_types::DidChangeTextDocumentParams) {
-        if let Some(change) = params.content_changes.into_iter().next() {
-            let mut workspaces = self.workspaces.lock().await;
+        let change =
+            guarded_unwrap!(params.content_changes.iter().next(), return);
+        
+        let mut documents = self.documents.lock().await;
 
-            let (current_path, document) =
-                self.parse_and_log(&change.text, params.text_document.uri, Status::Unknown, &mut workspaces).await;
+        let (current_path, document) =
+            self.diagnose_document(
+                &change.text, params.text_document.uri,
+                Status::Unknown, None, &mut documents, None, None
+            ).await;
 
-            self.commit_document(current_path, document, &mut workspaces).await;
+        self.commit_document(current_path, document, &mut documents).await;
+    }
+
+    async fn did_delete_files(&self, params: DeleteFilesParams) {
+        for file in params.files {
+            let uri_str = file.uri;
+
+            let path =
+                if uri_str.starts_with("file://") {PathBuf::from(&uri_str[7..]) }
+                else { continue };
+
+            self.documents.lock().await.remove(&path);
+
+            if let Some(workspace_mutex) = self.workspace_for_path(&path, &mut self.workspaces.lock().await).await {
+                let mut workspace = workspace_mutex.lock().await;
+
+                let luaurc = guarded_unwrap!(&mut workspace.luaurc, break);
+
+                luaurc.dependants.remove_by_right(path);
+            };
+        }
+    }
+
+    async fn did_change_workspace_folders(
+        &self,
+        params: DidChangeWorkspaceFoldersParams,
+    ) {
+        let mut workspaces = self.workspaces.lock().await;
+
+        for folder in params.event.added {
+            let workspace_path = guarded_unwrap!(folder.uri.to_file_path(), continue);
+
+            let workspace = Workspace::new(resolve_luaurc(&workspace_path).await);
+            workspaces.insert(workspace_path.clone(), Arc::new(Mutex::new(workspace)));
+        }
+
+        for folder in params.event.removed {
+            let workspace_path = guarded_unwrap!(folder.uri.to_file_path(), continue);
+
+            workspaces.remove(&workspace_path);
         }
     }
 
@@ -296,77 +337,92 @@ impl LanguageServer for Backend {
                 path.extension() == Some(OsStr::new("luaurc"))
             ) { return }
 
-            let base_path = guarded_unwrap!(path.join("../").canonicalize(), return);
-
-            let mut luaurcs = self.luaurcs.lock().await;
+            let workspace_path = guarded_unwrap!(path.join("../").canonicalize(), return);
 
             match change.typ {
                 FileChangeType::CHANGED => {
-                    luaurcs.remove(&base_path);
+                    let workspaces_mutex = self.workspaces.clone();
+                    let workspaces = workspaces_mutex.lock().await;
 
-                    let mut luaurc = if let Ok(contents) = fs::read_to_string(path).await {
-                        Luaurc::new(&contents)
-                    } else {
-                        Luaurc { aliases: HashMap::new() }
-                    };
+                    let mut workspace =
+                        guarded_unwrap!(workspaces.get(&workspace_path), return)
+                            .lock().await;
 
-                    let mut workspaces = self.workspaces.lock().await;
-                    let workspace_mutex = guarded_unwrap!(
-                        workspaces.get(&base_path).cloned(), return
-                    );
-                    let mut workspace = workspace_mutex.lock().await;
+                    let old_luaurc = guarded_unwrap!(workspace.luaurc.take(), return);
 
-                    let mut new_documents = HashMap::new();
+                    let old_aliases = old_luaurc.aliases;
+                    let new_aliases = Aliases::from_path(&path).await;
 
-                    for (document_path, document) in workspace.drain() {
-                        let document = document.lock().await;
+                    let luaurc_alias_diff = old_aliases.diff(&new_aliases)
+                        .cloned()
+                        .collect::<Vec<_>>();
 
-                        let uri = guarded_unwrap!(Url::from_file_path(&document_path), continue);
+                    let new_luaurc = workspace.luaurc.insert(Luaurc { aliases: new_aliases, dependants: old_luaurc.dependants });
 
-                        let (_, document) = self.parse_and_log(
-                            &document.source, uri, Status::Some(&mut luaurc),
-                            &mut workspaces
-                        ).await;
+                    let mut documents = self.documents.lock().await;
 
-                        new_documents.insert(document_path.clone(), Arc::new(Mutex::new(document)));
+                    for changed_alias in luaurc_alias_diff {
+                        let changed_dependencies =
+                            guarded_unwrap!(new_luaurc.dependants.get_by_left(&changed_alias), continue)
+                                .iter()
+                                .cloned()
+                                .collect::<Vec<_>>();
+
+                        for document_path in changed_dependencies {
+                            let document_mutex =
+                                guarded_unwrap!(documents.get(document_path.as_ref()), continue).clone();
+                            let document = document_mutex.lock().await;
+
+                            let uri = guarded_unwrap!(Url::from_file_path(document_path.as_ref()), continue);
+
+                            let (_, new_document) = self.diagnose_document(
+                                &document.source, uri, Status::Some(new_luaurc), Some(&workspaces), &mut documents, Some(&document), None
+                            ).await;
+
+                            // We can't do `*document = new_document;` as `document` may no longer exist in the map.
+                            documents.insert(document_path.as_ref().to_path_buf(), Arc::new(Mutex::new(new_document)));
+                        }
                     }
-
-                    workspaces.insert(base_path.clone(), Arc::new(Mutex::new(new_documents)));
-                    luaurcs.insert(base_path, luaurc);
                 },
 
                 FileChangeType::CREATED => {
-                    let luaurc = if let Ok(contents) = fs::read_to_string(path).await {
-                        Luaurc::new(&contents)
-                    } else {
-                        Luaurc { aliases: HashMap::new() }
-                    };
-
-                    luaurcs.insert(base_path, luaurc);
+                    self.workspaces.lock().await.set_luaurc_for_workspace(&workspace_path, Luaurc::from_path(&path).await).await;
                 }
 
                 FileChangeType::DELETED => {
-                    guarded_unwrap!(luaurcs.remove(&base_path), return);
+                    let workspaces_mutex = self.workspaces.clone();
+                    let workspaces = workspaces_mutex.lock().await;
 
-                    let mut workspaces = self.workspaces.lock().await;
-                    let workspace_mutex = guarded_unwrap!(
-                        workspaces.get(&base_path).cloned(), return
-                    );
-                    let mut workspace = workspace_mutex.lock().await;
+                    let mut workspace =
+                        guarded_unwrap!(workspaces.get(&workspace_path), return)
+                            .lock().await;
 
-                    let mut new_documents = HashMap::new();
+                    let deleted_luaurc = guarded_unwrap!(workspace.luaurc.take(), return);
 
-                    for (document_path, document) in workspace.drain() {
-                        let document = document.lock().await;
+                    let mut documents = self.documents.lock().await;
 
-                        let uri = guarded_unwrap!(Url::from_file_path(&document_path), continue);
+                    for alias in deleted_luaurc.aliases.keys() {
+                        let changed_dependencies =
+                            guarded_unwrap!(deleted_luaurc.dependants.get_by_left(alias), continue)
+                                .iter()
+                                .cloned()
+                                .collect::<Vec<_>>();
 
-                        let (_, document) = self.parse_and_log(&document.source, uri, Status::None, &mut workspaces).await;
+                        for document_path in changed_dependencies {
+                            let document_mutex =
+                                guarded_unwrap!(documents.get(document_path.as_ref()), continue).clone();
+                            let document = document_mutex.lock().await;
 
-                        new_documents.insert(document_path.clone(), Arc::new(Mutex::new(document)));
+                            let uri = guarded_unwrap!(Url::from_file_path(document_path.as_ref()), continue);
+
+                            let (_, new_document) = self.diagnose_document(
+                                &document.source, uri, Status::None, Some(&workspaces), &mut documents, Some(&document), None
+                            ).await;
+                            
+                            // We can't do `*document = new_document;` as `document` may no longer exist in the map.
+                            documents.insert(document_path.as_ref().to_path_buf(), Arc::new(Mutex::new(new_document)));
+                        }
                     }
-
-                    workspaces.insert(base_path, Arc::new(Mutex::new(new_documents)));
                 },
 
                 _ => ()
@@ -380,46 +436,38 @@ impl LanguageServer for Backend {
 
         let current_path = guarded_unwrap!(uri.to_file_path(), return Ok(None));
 
-        let workspaces = self.workspaces.lock().await;
-        let workspace_mutex = guarded_unwrap!(
-            workspaces.get_for_path(&current_path), return Ok(None)
-        );
-        let workspace = workspace_mutex.lock().await;
+        let documents = self.documents.lock().await;
+        let document_mutex = guarded_unwrap!(documents.get(&current_path), return Ok(None)).clone();
+        let document = document_mutex.lock().await;
 
-        let document = workspace.get(&current_path);
+        let byte_offset = position.byte_offset(&document.source);
 
-        if let Some(document) = document {
-            let document = document.lock().await;
+        if let Some((
+            span, kind
+        )) = document.definitions.get_key_value(&byte_offset) {
+            let rope = Rope::from_str(&document.source);
 
-            let byte_offset = position.byte_offset(&document.source);
+            match kind {
+                DefinitionKind::Derive { path } => {
+                    if let Ok(target_uri) = Url::from_file_path(path) {
+                        return Ok(Some(GotoDefinitionResponse::Link(vec![LocationLink {
+                            origin_selection_range: Some(Range::from_span(&rope, (*span.start(), *span.end()))),
+                            target_uri,
+                            target_range: Range {
+                                start: Position { line: 0, character: 0 },
+                                end: Position { line: 0, character: 0 },
+                            },
+                            target_selection_range: Range {
+                                start: Position { line: 0, character: 0 },
+                                end: Position { line: 0, character: 0 },
+                            },
+                        }])));
+                    }
+                },
 
-            if let Some((
-                span, kind
-            )) = document.definitions.get_key_value(&byte_offset) {
-                let rope = Rope::from_str(&document.source);
-
-                match kind {
-                    DefinitionKind::Derive { path } => {
-                        if let Ok(target_uri) = Url::from_file_path(path) {
-                            return Ok(Some(GotoDefinitionResponse::Link(vec![LocationLink {
-                                origin_selection_range: Some(Range::from_span(&rope, (*span.start(), *span.end()))),
-                                target_uri,
-                                target_range: Range {
-                                    start: Position { line: 0, character: 0 },
-                                    end: Position { line: 0, character: 0 },
-                                },
-                                target_selection_range: Range {
-                                    start: Position { line: 0, character: 0 },
-                                    end: Position { line: 0, character: 0 },
-                                },
-                            }])));
-                        }
-                    },
-
-                    DefinitionKind::Selector { .. } => ()
-                }
+                DefinitionKind::Selector { .. } => ()
             }
-        };
+        }
 
         return Ok(None)
     }
@@ -430,44 +478,37 @@ impl LanguageServer for Backend {
 
         let current_path = guarded_unwrap!(uri.to_file_path(), return Ok(None));
 
-        let workspaces = self.workspaces.lock().await;
-        let workspace_mutex = guarded_unwrap!(
-            workspaces.get_for_path(&current_path), return Ok(None)
-        );
-        let workspace = workspace_mutex.lock().await;
+        let documents = self.documents.lock().await;
+        let document_mutex = guarded_unwrap!(documents.get(&current_path), return Ok(None)).clone();
+        let document = document_mutex.lock().await;
 
-        let document = workspace.get(&current_path);
 
-        if let Some(document) = document {
-            let document = document.lock().await;
+        let byte_offset = position.byte_offset(&document.source);
 
-            let byte_offset = position.byte_offset(&document.source);
+        if let Some((
+            span, kind
+        )) = document.definitions.get_key_value(&byte_offset) {
+            let rope = Rope::from_str(&document.source);
 
-            if let Some((
-                span, kind
-            )) = document.definitions.get_key_value(&byte_offset) {
-                let rope = Rope::from_str(&document.source);
+            let contents = match kind {
+                DefinitionKind::Derive { path } => {
+                    HoverContents::Scalar(MarkedString::from_markdown(
+                        format!("```luau\n{:#?}\n```", path)
+                    ))
+                }
 
-                let contents = match kind {
-                    DefinitionKind::Derive { path } => {
-                        HoverContents::Scalar(MarkedString::from_markdown(
-                            format!("```luau\n{:#?}\n```", path)
-                        ))
-                    }
+                DefinitionKind::Selector { hint, .. } => {
+                    HoverContents::Scalar(MarkedString::from_markdown(
+                        format!("```luau\n{}\n```", hint.to_string())
+                    ))
+                },
+            };
 
-                    DefinitionKind::Selector { hint, .. } => {
-                        HoverContents::Scalar(MarkedString::from_markdown(
-                            format!("```luau\n{}\n```", hint.to_string())
-                        ))
-                    },
-                };
-
-                return Ok(Some(Hover {
-                    contents,
-                    range: Some(Range::from_span(&rope, (*span.start(), *span.end()))),
-                }))
-            }
-        };
+            return Ok(Some(Hover {
+                contents,
+                range: Some(Range::from_span(&rope, (*span.start(), *span.end()))),
+            }))
+        }
 
         Ok(None)
     }
@@ -545,13 +586,34 @@ impl LanguageServer for Backend {
     }
 }
 
-impl Backend {
-    fn workspace_path_for_path(&self, path: &PathBuf, workspaces: &mut Workspaces) -> Option<PathBuf> {
+impl<'a> Backend {
+    fn new(client: Client) -> Self {
+        Self {
+            client,
+            workspaces: Arc::new(Mutex::new(Workspaces::new())),
+            documents: Arc::new(Mutex::new(Documents::new()))
+        }
+    }
+
+    async fn workspace_for_path(&self, path: &Path, workspaces: &MutexGuard<'_, Workspaces>) -> Option<Arc<Mutex<Workspace>>> {
+        let (_, workspace) = guarded_unwrap!(
+            workspaces
+                .iter()
+                .find(|(x, _)| path.starts_with(x)),
+                return None
+        );
+
+        let workspace = workspace.clone();
+
+        Some(workspace)
+    }
+
+    async fn workspace_path_for_path(
+        &'a self, path: &'a Path, workspaces: &'a MutexGuard<'a, Workspaces>
+    ) -> Option<&'a PathBuf> {
         workspaces
             .iter()
-            .find(|(x, _)| path.starts_with(x))
-            .map(|(x, _)| x)
-            .cloned()
+            .find_map(|(x, _)| if path.starts_with(x) { Some(x) } else { None })
     }
 
     async fn notify(&self, ty: MessageType, msg: String) 
@@ -564,85 +626,244 @@ impl Backend {
         ).await;
     }
 
-    async fn commit_document(&self, current_path: Option<PathBuf>, document: Document, workspaces: &mut Workspaces) {
+    async fn commit_document(&self, current_path: Option<PathBuf>, document: Document, documents: &mut Documents) {
         if let Some(current_path) = current_path {
-            if let Some(documents) = workspaces.get_for_path(&current_path) {
-                documents.lock().await.insert(current_path, Arc::new(Mutex::new(document)));
-            }
+            documents.insert(current_path, Arc::new(Mutex::new(document)));
         }
     }
 
-    async fn parse_and_log(
-        &self,
-        source_code: &str,
+    fn diagnose_document<'b: 'a>(
+        &'b self,
+        source_code: &'a str,
         uri: Url,
-        luaurc: Status<&mut Luaurc>,
-        workspaces: &mut Workspaces
-    ) -> (Option<PathBuf>, Document) {
-        let mut document = Document::new(source_code.to_string());
+        mut luaurc: Status<&'a mut Luaurc>,
+        workspaces: Option<&'a MutexGuard<'b, Workspaces>>,
+        documents: &'a mut MutexGuard<'b, Documents>,
+        
+        old_document: Option<&'a Document>,
 
-        let (diagnostics, current_path) = if source_code.len() == 0 {
-            (vec![], None)
+        // If diagnose_document was initiated by another file.
+        // Used to prevent infinite loops.
+        initiation_path: Option<PathBuf>
+    ) -> Pin<Box<dyn Future<Output = (Option<PathBuf>, Document)> + 'a + Send>> {
+        Box::pin(async move {
+            let mut document = Document::new(source_code.to_string());
 
-        } else {
-            let parsed = Parser::new(Lexer::new(source_code));
+            let (
+                diagnostics,
+                current_path
+            ) = if source_code.len() == 0 {
+                (vec![], None)
 
-            let uri_file_path = uri.to_file_path();
+            } else {
+                let parsed = Parser::new(Lexer::new(source_code));
 
-            let (typechecked, current_path) = match uri_file_path {
-                Ok(current_path) => {
-                    let typechecked = match luaurc {
-                        Status::Some(luaurc) =>
-                            Typechecker::new(parsed, &current_path, workspaces, &mut document, Some(luaurc)),
+                let uri_file_path = uri.to_file_path();
 
-                        Status::Unknown => {
-                            let luaurcs = self.luaurcs.lock().await;
+                let (typechecked, current_path) = match uri_file_path {
+                    Ok(current_path) => {
+                        let typechecked = match luaurc.as_deref_mut() {
+                            Status::Some(luaurc) =>
+                                Typechecker::new(parsed, &current_path, Some(luaurc), &mut document).await,
 
-                            let luaurc =
-                                if let Some(workspace_path) = &self.workspace_path_for_path(&current_path, workspaces) {
-                                    luaurcs.get(workspace_path)
-                                } else { None };
+                            Status::Unknown => 'outer: {
+                                'inner: {
+                                    let workspaces = match workspaces {
+                                        Some(workspaces) => workspaces,
+                                        None => &self.workspaces.lock().await
+                                    };  
 
-                            Typechecker::new(parsed, &current_path, workspaces, &mut document, luaurc)
-                        },
+                                    let workspace_mutex =
+                                        guarded_unwrap!(self.workspace_for_path(&current_path, workspaces).await, break 'inner);
 
-                        Status::None =>
-                            Typechecker::new(parsed, &current_path, workspaces, &mut document, None)
-                    };
+                                    let mut workspace = workspace_mutex.lock().await;
 
-                    (typechecked, Some(current_path))
-                },
+                                    let luaurc = guarded_unwrap!(&mut workspace.luaurc, break 'inner);
 
-                Err(_) => {
-                    self.notify(
-                        MessageType::WARNING,
-                        String::from("Could not get the path for the current files. You may experience issues with derives being resolved.")
-                    ).await;
+                                    break 'outer Typechecker::new(parsed, &current_path, Some(luaurc), &mut document).await
+                                }
 
-                    (Typechecker::new(parsed, &PathBuf::from("/"), workspaces, &mut document, None), None)
-                }
+                                Typechecker::new(parsed, &current_path, None, &mut document).await
+                            },
+
+                            Status::None =>
+                                Typechecker::new(parsed, &current_path, None, &mut document).await
+                        };
+
+                        // We need to update all documents that this one depends on.
+                        // TODO: Reimplement this to a more sophisticated method that
+                        // doesn't completely re-diagnose each dependant.
+
+                        let derives = typechecked.1;
+                        let mut typechecked = typechecked.0;
+
+                        let mut dependencies = document.dependencies.clone();
+
+                        // We also need to update any old dependencies now that this file doesn't depend on it.
+                        // (This is largly for updating dependencies that are no longer cyclic).
+                        if let Some(old_document) = old_document {
+                            dependencies.extend(old_document.dependencies.iter().cloned());
+                            
+                        } else {
+                            if let Some(old_document_mutex) = documents.get(&current_path) {
+                                let old_document = old_document_mutex.lock().await;
+
+                                dependencies.extend(old_document.dependencies.iter().cloned());
+                            };
+                        };
+
+                        // We need to insert the document so that the dependant docs update properly.
+                        documents.insert(current_path.clone(), Arc::new(Mutex::new(document)));
+
+                        let workspaces = if let Some(workspaces) = workspaces {
+                            workspaces
+                        } else {
+                            &self.workspaces.lock().await
+                        };
+
+                        let workspace_path_for_current_path =
+                            self.workspace_path_for_path(&current_path, workspaces).await;
+
+                        if let Some(initiation_path) = &initiation_path {
+                            for dependant_path in dependencies {
+                                if initiation_path == &dependant_path { continue };
+
+                                self.diagnose_sub_document(
+                                    &current_path, workspace_path_for_current_path, dependant_path,
+                                    workspaces, documents, luaurc.as_deref_mut()
+                                ).await;
+                            };
+
+                        } else {
+                            for dependant_path in dependencies {
+                                self.diagnose_sub_document(
+                                    &current_path, workspace_path_for_current_path, dependant_path,
+                                    workspaces, documents, luaurc.as_deref_mut()
+                                ).await;
+                            };
+                        }
+
+                        // We get the document back out.
+                        let document_option = 'block: {
+                            let document_mutex =
+                                guarded_unwrap!(documents.remove(&current_path), break 'block None);
+
+                            guarded_unwrap!(Arc::try_unwrap(document_mutex), break 'block  None)
+                                .into_inner()
+                                .into()
+                        };
+                        // This *should* always be Some unless something's gone terribly wrong.
+                        document = document_option.unwrap();
+
+                        // Checks for cyclic dependencies.
+
+                        let gathered_dependencies =
+                            gather_dependencies(&current_path, &document, documents).await;
+
+                        for (cyclic_path, ancestry_chain) in &gathered_dependencies.cyclic_dependencies {
+                            let span = guarded_unwrap!(derives.get(cyclic_path), continue);
+
+                            typechecked.parsed.ast_errors.push(
+                                TypeError::CyclicDerive { kind: CyclicKind::External(ancestry_chain) },
+                                typechecked.parsed.range_from_span((*span.start(), *span.end()))
+                            );
+                        };
+
+                        (typechecked, Some(current_path))
+                    },
+
+                    Err(_) => {
+                        self.notify(
+                            MessageType::WARNING,
+                            String::from("Could not get the path for the current files. You may experience issues with derives being resolved.")
+                        ).await;
+
+                        (Typechecker::new(parsed, &PathBuf::from("/"), None, &mut document).await.0, None)
+                    }
+                };
+
+                (typechecked.parsed.ast_errors.0, current_path)
             };
 
-            (typechecked.parsed.ast_errors.0, current_path)
+            self.client
+                .publish_diagnostics(uri, diagnostics, None)
+                .await;
+
+
+            (current_path, document)
+        })
+    }
+
+    async fn diagnose_sub_document<'b: 'a>(
+        &'b self,
+        current_path: &PathBuf,
+        workspace_path_for_current_path: Option<&PathBuf>,
+        dependant_path: PathBuf,
+        workspaces: &'a MutexGuard<'b, Workspaces>,
+        documents: &'a mut MutexGuard<'b, Documents>,
+        luaurc: Status<&'a mut Luaurc>
+    ) {
+        let dependant_uri =
+            guarded_unwrap!(Url::from_file_path(&dependant_path), return);
+
+        let dependant_source = match documents.get(&dependant_path) {
+            Some(document) => document.lock().await.source.to_string(),
+            None => guarded_unwrap!(fs::read_to_string(&dependant_path).await, return)
         };
 
-        self.client
-            .publish_diagnostics(uri, diagnostics, None)
-            .await;
+        let workspace_path_for_dependant_path = 
+            self.workspace_path_for_path(&dependant_path, workspaces).await;
 
-        (current_path, document)
+        let next_luaurc = if workspace_path_for_current_path == workspace_path_for_dependant_path {
+            luaurc
+        } else {
+            Status::Unknown
+        };
+
+        let (_, document) = self.diagnose_document(
+            &dependant_source, dependant_uri, next_luaurc,
+            Some(workspaces), documents, None, Some(current_path.clone())
+        ).await;
+
+        documents.insert(dependant_path, Arc::new(Mutex::new(document)));
+    }
+
+    fn populate_workspace<'b: 'a>(
+        &'b self,
+        entry_path: PathBuf,
+        workspaces: &'a MutexGuard<'b, Workspaces>,
+        documents: &'a mut MutexGuard<'b, Documents>,
+    ) -> Pin<Box<dyn Future<Output = ()> + 'a + Send>> {
+        Box::pin(async move {
+            let mut dir = guarded_unwrap!(fs::read_dir(&entry_path).await, return);
+
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                let path = entry.path();
+
+                if path.is_file() && path.extension() == Some(OsStr::new("rsml")) {
+                    let uri = guarded_unwrap!(Url::from_file_path(&path), continue);
+                    let source = guarded_unwrap!(fs::read_to_string(&path).await, continue);
+
+                    let (current_path, document) =
+                        self.diagnose_document(
+                            &source, uri, Status::Unknown, Some(workspaces), documents, None, None
+                        ).await;
+
+                    self.commit_document(current_path, document, documents).await;
+
+                } else if path.is_dir() {
+                    self.populate_workspace(path, workspaces, documents).await;
+                }
+            }
+        })
     }
 }
+
 
 async fn watch() {
     let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
 
-    let (service, socket) = LspService::new(|client| Backend {
-        client,
-        workspaces: Arc::new(Mutex::new(Workspaces::new())),
-        luaurcs: Arc::new(Mutex::new(HashMap::new())),
-        has_root: Mutex::new(true)
-    });
+    let (service, socket) = LspService::new(Backend::new);
 
     Server::new(stdin, stdout, socket).serve(service).await;
 }
@@ -657,8 +878,9 @@ async fn test() {
     //println!("{:#?} {:#?}", parsed.ast, parsed.ast_errors);
 
     let typechecked = Typechecker::new(
-        parsed, &PathBuf::from("/"), &mut Workspaces::new(), &mut Document::new(contents.clone()), None
-    );
+        parsed, &PathBuf::from("/"), None,
+        &mut Document::new(contents.clone())
+    ).await.0;
 
     println!("{:#?} {:#?}", typechecked.parsed.ast, typechecked.parsed.ast_errors);
 }
@@ -671,5 +893,64 @@ async fn main() {
         test().await;
     } else {
         watch().await;
+    }
+}
+
+#[derive(Debug)]
+pub struct GatheredDependencies {
+    pub dependencies: HashSet<PathBuf>,
+    pub cyclic_dependencies: HashSet<(PathBuf, String)>
+}
+
+async fn gather_dependencies(
+    current_path: &Path, document: &Document, documents: &MutexGuard<'_, Documents>
+) -> GatheredDependencies {
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut cyclic_dependencies: HashSet<(PathBuf, String)> = HashSet::new();
+    let mut queue: VecDeque<(PathBuf, Vec<PathBuf>)> = VecDeque::new();
+
+    visited.insert(current_path.to_path_buf());
+    queue.push_back((current_path.to_path_buf(), vec![current_path.to_path_buf()]));
+
+    while let Some((node, ancestors)) = queue.pop_front() {
+        let this_document = if node == current_path {
+            document
+
+        } else {
+            let document_mutex = guarded_unwrap!(documents.get(&node), continue);
+            &document_mutex.lock().await
+        };
+
+        let neighbours = &this_document.dependencies;
+
+        for neighbour in neighbours {
+            if ancestors.contains(&neighbour) {
+                // We get the second ancestor as its the stylesheet that is being derived.
+                if let Some(cyclic_dependency) = ancestors.get(1) {
+                    let ancestry_chain = ancestors.iter()
+                        .map(|x| format!("{:#?}", x))
+                        .intersperse(" -> ".to_string())
+                        .collect::<String>();
+
+                    cyclic_dependencies.insert((cyclic_dependency.to_path_buf(), ancestry_chain));
+                }
+            }
+
+            if !visited.contains(neighbour.as_path()) {
+                let mut new_ancestors = ancestors.clone();
+                new_ancestors.push(neighbour.to_path_buf());
+
+                queue.push_back((neighbour.to_path_buf(), new_ancestors));
+            }
+        }
+        
+        if node != current_path {
+            visited.insert(node);
+        }
+    }
+
+    GatheredDependencies {
+        dependencies: visited,
+        cyclic_dependencies
     }
 }

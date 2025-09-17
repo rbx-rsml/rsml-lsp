@@ -56,22 +56,44 @@ macro_rules! guarded_unwrap {
     };
 }
 
-pub trait GuardedUnwrap<T> {
+pub trait GuardedUnwrap<'a, T> {
     fn guarded_unwrap_inner(self) -> Option<T>;
 }
 
-impl<T> GuardedUnwrap<T> for Option<T> {
+impl<'a, T> GuardedUnwrap<'a, T> for Option<T> {
     fn guarded_unwrap_inner(self) -> Option<T> {
         self
     }
 }
 
-impl<T, E> GuardedUnwrap<T> for Result<T, E> {
+impl<'a, T> GuardedUnwrap<'a, &'a T> for &'a Option<T> {
+    fn guarded_unwrap_inner(self) -> Option<&'a T> {
+        self.as_ref()
+    }
+}
+
+impl<'a, T> GuardedUnwrap<'a, &'a mut T> for &'a mut Option<T> {
+    fn guarded_unwrap_inner(self) -> Option<&'a mut T> {
+        self.as_mut()
+    }
+}
+
+
+impl<'a, T, E> GuardedUnwrap<'a, T> for Result<T, E> {
     fn guarded_unwrap_inner(self) -> Option<T> {
-        match self {
-            Ok(value) => Some(value),
-            Err(_) => None
-        }
+        self.ok()
+    }
+}
+
+impl<'a, T, E> GuardedUnwrap<'a, &'a T> for &'a Result<T, E> {
+    fn guarded_unwrap_inner(self) -> Option<&'a T> {
+        self.as_ref().ok()
+    }
+}
+
+impl<'a, T, E> GuardedUnwrap<'a, &'a mut T> for &'a mut Result<T, E> {
+    fn guarded_unwrap_inner(self) -> Option<&'a mut T> {
+        self.as_mut().ok()
     }
 }
 

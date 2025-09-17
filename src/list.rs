@@ -3,6 +3,25 @@ use guarded::guarded_unwrap;
 
 use crate::lexer::{Token, TokenKind};
 
+#[macro_export]
+macro_rules! token_kind_list {
+    ($str:literal, [ $( $name:ident ),* ]) => {
+        &TokenKindList::new_with_stringified([$(
+            (TokenKind::$name, std::mem::discriminant(&TokenKind::$name))
+        ),*], Stringified::Single(String::from($str)))
+    };
+
+    ($( $name:ident ),*) => {
+        &TokenKindList::new([$(
+            (TokenKind::$name, std::mem::discriminant(&TokenKind::$name))
+        ),*])
+    };
+
+    ([ $( $name:ident ),* ]) => {
+        token_kind_list!($( $name ),*)
+    };
+}
+
 #[derive(Debug)]
 pub struct TokenKindList<const N: usize>{
     items: [(TokenKind, Discriminant<TokenKind>); N],

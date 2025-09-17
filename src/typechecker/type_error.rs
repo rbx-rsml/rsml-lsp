@@ -17,14 +17,14 @@ impl ToString for Datatype {
     }
 }
 
-pub enum CyclicKind {
+pub enum CyclicKind<'a> {
     Internal,
-    External
+    External(&'a str)
 }
 
 pub enum TypeError<'a> {
     UnknownDerive { path: Option<&'a str> },
-    CyclicDerive { kind: CyclicKind },
+    CyclicDerive { kind: CyclicKind<'a> },
     InvalidType { expected: Option<Datatype> },
     InvalidSelector { msg: Option<&'a str> }
 }
@@ -51,13 +51,13 @@ impl<'a> TypeError<'a> {
                 None => String::from("Type Error (Unknown Derive)")
             },
 
-            Self::CyclicDerive { kind } => format!(
-                    "Type Error (Cyclic Derive): {}",
-                    match kind {
-                        CyclicKind::Internal => "Cannot derive the current Style Sheet.",
-                        CyclicKind::External => "The current StyleSheet and this derived StyleSheet both derive each other.",
-                    }
-                ),
+            Self::CyclicDerive { kind } => match kind {
+                    CyclicKind::Internal => String::from("Type Error (Cyclic Derive): Cannot derive the current Style Sheet."),
+                    CyclicKind::External(ancestry_chain) => format!(
+                        "Type Error (Cyclic Derive): {}",
+                        ancestry_chain
+                    ),
+                },
 
             Self::InvalidType { expected } => match expected {
                 Some(expected) => format!("Type Error (Invalid Type): Expected type `{}`.", expected.to_string()),

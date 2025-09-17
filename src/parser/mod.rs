@@ -3,7 +3,7 @@ use std::{collections::HashSet, mem::discriminant, sync::LazyLock};
 use ropey::Rope;
 use tower_lsp::lsp_types::{Diagnostic, NumberOrString, Range};
 
-use crate::{guarded_unwrap, guarded_unwrap_advance, lexer::{Lexer, MultilineString, SpannedToken, Token, TokenKind, DECLARATION_NAMES, TOKEN_KIND_ADD_SUB_PRECEDENCE, TOKEN_KIND_CONSTRUCT_DELIMITERS, TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS, TOKEN_KIND_OPERATOR_PRECEDENCE}, list::{Stringified, TokenKindList}, parser::parse_error::ParseErrorMessage, range_from_span::RangeFromSpan};
+use crate::{guarded_unwrap, token_kind_list, guarded_unwrap_advance, lexer::{Lexer, MultilineString, SpannedToken, Token, TokenKind, DECLARATION_NAMES, TOKEN_KIND_ADD_SUB_PRECEDENCE, TOKEN_KIND_CONSTRUCT_DELIMITERS, TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS, TOKEN_KIND_OPERATOR_PRECEDENCE}, list::{Stringified, TokenKindList}, parser::parse_error::ParseErrorMessage, range_from_span::RangeFromSpan};
 
 mod parse_error;
 use parse_error::ParseError;
@@ -11,7 +11,7 @@ use parse_error::ParseError;
 type SymResult<T> = Result<T, T>;
 
 pub struct Parser<'a> {
-    lexer: Lexer<'a>,
+    pub lexer: Lexer<'a>,
     last_token_end: usize,
 
     pub ast: Vec<Construct<'a>>,
@@ -123,24 +123,6 @@ impl<'a> Parsed<'a> {
 
         return self.0
     }
-}
-
-macro_rules! token_kind_list {
-    ($str:literal, [ $( $name:ident ),* ]) => {
-        &TokenKindList::new_with_stringified([$(
-            (TokenKind::$name, discriminant(&TokenKind::$name))
-        ),*], Stringified::Single(String::from($str)))
-    };
-
-    ($( $name:ident ),*) => {
-        &TokenKindList::new([$(
-            (TokenKind::$name, discriminant(&TokenKind::$name))
-        ),*])
-    };
-
-    ([ $( $name:ident ),* ]) => {
-        token_kind_list!($( $name ),*)
-    };
 }
 
 #[macro_export]

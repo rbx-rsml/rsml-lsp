@@ -1,3 +1,11 @@
+# v0.2.3
+## Fixed
+- Removed `rsml` files are now removed from the internal documents map.
+- Removed/added workspaces are now removed/added from the internal workspaces map.
+
+## Changes
+- Errors are now shown for external cyclic dependencies.
+
 # v0.2.2
 ## Fixes
 - Fixed issue where diagnostics for multiline string errors didn't exist.
@@ -13,7 +21,7 @@
   - a selector selects more than one class.
   - a selector part selects an non-existant class or state.
   - a selector part selects a class which can't be used as a pseudo selector.
-  - a selector part appears after a psuedo selector.
+  - a selector part appears after a pseudo selector.
 
 - Added type hover hints to selectors and derives.
 
