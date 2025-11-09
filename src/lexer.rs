@@ -262,7 +262,7 @@ impl TokenKind {
 
 
 #[derive(Logos, Debug, PartialEq, Clone)]
-#[logos(skip r"[ \t\n\f]+")]
+#[logos(skip r"[ \t\n\r\f]+")]
 enum MultilineStringToken {
     #[regex(r"\]=*\]")]
     ExitMultilineString,
