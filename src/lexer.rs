@@ -1,21 +1,25 @@
-use std::{collections::{HashMap, HashSet}, mem::{discriminant, Discriminant}, sync::LazyLock};
+use crate::lazy_collection;
+use crate::string_clip::StringClip;
 use enum_kinds::EnumKind;
 use guarded::guarded_unwrap;
 use logos::{Lexer as LogosLexer, Logos, SpannedIter};
 use ropey::Rope;
-use crate::{lazy_collection};
-use crate::string_clip::StringClip;
+use std::{
+    collections::{HashMap, HashSet},
+    mem::{discriminant, Discriminant},
+    sync::LazyLock,
+};
 
 pub struct Lexer<'a> {
     token_stream: SpannedIter<'a, Token<'a>>,
-    pub rope: Rope
+    pub rope: Rope,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             token_stream: Token::lexer(input).spanned(),
-            rope: Rope::from_str(input)
+            rope: Rope::from_str(input),
         }
     }
 
@@ -29,14 +33,15 @@ impl<'a> Iterator for Lexer<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let (token, span) = guarded_unwrap!(self.token_stream.next(), return None);
-    
+
         match token {
             Ok(token) => match token {
-                Token::CommentMulti(MultilineString { span, .. }) |
-                Token::StringMulti(MultilineString { span, .. }) =>
-                    Some(SpannedToken::new(span.0, token, span.1)),
+                Token::CommentMulti(MultilineString { span, .. })
+                | Token::StringMulti(MultilineString { span, .. }) => {
+                    Some(SpannedToken::new(span.0, token, span.1))
+                }
 
-                _ => Some(SpannedToken::new(span.start, token, span.end))
+                _ => Some(SpannedToken::new(span.start, token, span.end)),
             },
 
             Err(_) => Some(SpannedToken::new(span.start, Token::Error, span.end)),
@@ -44,14 +49,14 @@ impl<'a> Iterator for Lexer<'a> {
     }
 }
 
-pub static DECLARATION_NAMES: [&str; 4] = [ "@derive", "@macro", "@priority", "@name" ];
+pub static DECLARATION_NAMES: [&str; 4] = ["@derive", "@macro", "@priority", "@name"];
 
 #[derive(Debug, Clone)]
 pub struct SpannedToken<'a>(pub usize, pub Token<'a>, pub usize);
 
 impl<'a> SpannedToken<'a> {
-    pub fn new(start: usize, value: Token<'a>, end: usize ) -> Self {
-        Self (start, value, end)
+    pub fn new(start: usize, value: Token<'a>, end: usize) -> Self {
+        Self(start, value, end)
     }
 
     #[inline(always)]
@@ -74,14 +79,18 @@ impl<'a> SpannedToken<'a> {
         (self.0, self.2)
     }
 }
- 
+
 fn str_to_option(str: &str) -> Option<&str> {
-    if str.len() == 0 { None } else { Some(str) }
+    if str.len() == 0 {
+        None
+    } else {
+        Some(str)
+    }
 }
 
 #[derive(Logos, Clone, Debug, PartialEq, EnumKind)]
 #[enum_kind(TokenKind, derive(Hash))]
-#[logos(skip r"[ \t\n\f]+")]
+#[logos(skip r"[ \t\n\r\f]+")]
 #[logos(subpattern ident = r"[_A-Za-z][_A-Za-z\d]*|[_A-Za-z]+(-[A-Za-z\d_]+)+")]
 #[logos(subpattern numsect = r"_*[\d]+_*")]
 #[logos(subpattern num = r"((?&numsect)+\.)?(?&numsect)+|\.(?&numsect)")]
@@ -95,7 +104,6 @@ pub enum Token<'a> {
 
     // When adding a new declaration make sure to
     // update the `DECLARATIONS` array located above.
-
     #[token("@derive")]
     DeriveDeclaration,
 
@@ -237,7 +245,7 @@ pub enum Token<'a> {
 
     Error,
 
-    None
+    None,
 }
 
 impl<'a> Token<'a> {
@@ -254,12 +262,12 @@ impl<'a> Token<'a> {
 
 impl TokenKind {
     pub fn name(&self) -> &'static str {
-        TOKEN_KIND_STRING_MAP.get(self)
+        TOKEN_KIND_STRING_MAP
+            .get(self)
             .map(|x| *x)
             .unwrap_or_else(|| "**error**")
     }
 }
-
 
 #[derive(Logos, Debug, PartialEq, Clone)]
 #[logos(skip r"[ \t\n\r\f]+")]
@@ -272,10 +280,13 @@ enum MultilineStringToken {
 pub struct MultilineString<'a> {
     pub nestedness: Result<usize, usize>,
     pub content: &'a str,
-    pub span: (usize, usize)
+    pub span: (usize, usize),
 }
 
-fn multiline_string_block_callback<'a>(lexer: &mut LogosLexer<'a, Token<'a>>, sub_amount: usize) -> MultilineString<'a> {
+fn multiline_string_block_callback<'a>(
+    lexer: &mut LogosLexer<'a, Token<'a>>,
+    sub_amount: usize,
+) -> MultilineString<'a> {
     let mut sub_lexer = lexer.clone().morph::<MultilineStringToken>();
 
     // Subtracts by `sub_amount` to account for leading characters (typically `--` for multi-line comments).
@@ -291,28 +302,27 @@ fn multiline_string_block_callback<'a>(lexer: &mut LogosLexer<'a, Token<'a>>, su
                 let close_span = sub_lexer.span();
                 // Subtracts by 2 to account for `]` either side of the equal signs.
                 let close_nestedness = sub_lexer.slice().len() - 2;
-                
 
                 if open_nestedness == close_nestedness {
                     let data = MultilineString {
                         nestedness: Ok(open_nestedness),
                         content: &sub_lexer.source()[content_span_start..close_span.start],
-                        span: (open_span_start, close_span.end)
+                        span: (open_span_start, close_span.end),
                     };
 
                     *lexer = sub_lexer.morph();
 
                     return data;
                 }
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 
     let data = MultilineString {
         nestedness: Err(open_nestedness),
         content: sub_lexer.source().clip(content_span_start, 0),
-        span: (open_span_start, sub_lexer.source().len())
+        span: (open_span_start, sub_lexer.source().len()),
     };
 
     *lexer = sub_lexer.morph();
