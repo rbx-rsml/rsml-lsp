@@ -269,6 +269,14 @@ impl<'a> TypecheckSelectors<'a> {
         }
     }
 
+    fn consume_past_comma(&mut self) {
+        let Some(part) = self.next() else { return };
+        if matches!(part.token.value(), Token::Comma) {
+            let Some(next) = self.next() else { return };
+            self.begin_iteration(next);
+        }
+    }
+
     fn consume_with_error<const N: usize>(
         &mut self,
         origin_kind: TokenKind,
