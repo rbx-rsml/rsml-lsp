@@ -1,24 +1,49 @@
-name: "Build Extension (VS Code)"
+name: "Release Extension (VS Code)"
 
 on:
   push:
     tags: ["vscode-v*"]
 
 jobs:
-  build: 
-    uses: ./.github/workflows/release.yml
+  preflight:
+    name: Verify LSP Release
+    runs-on: ubuntu-latest
+    outputs:
+      lsp-tag: ${{ steps.read-version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read LSP Version
+        id: read-version
+        run: |
+          VERSION=$(jq -r '.version' extensions/vscode/lsp-version.json)
+          TAG="lsp-v${VERSION}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "LSP version: $VERSION (tag: $TAG)"
+
+      - name: Verify LSP Release Exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.read-version.outputs.tag }}"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::LSP release '$TAG' does not exist. Create an LSP release first by pushing a matching lsp-v* tag."
+            exit 1
+          fi
+          echo "LSP release '$TAG' found."
 
   build-vscode:
     name: Build VS Code
-    needs: build
+    needs: preflight
     runs-on: ubuntu-latest
     env:
       BIN: rsml-lsp-vscode
+      LSP_TAG: ${{ needs.preflight.outputs.lsp-tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
-        
+
       - name: Restore Bun Cache
         uses: actions/cache/restore@v4
         with:
@@ -72,17 +97,18 @@ jobs:
           [ -f build.mjs ] && rm -r build.mjs
           [ -f bun.lock ] && rm -r bun.lock
 
-      - name: Download LSP Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: ./downloaded-artifacts
-
-      - name: Create Server Artifacts Destination
-        run: mkdir -p extensions/vscode/server
-
-      - name: Extract Server Artifacts To Destination
+      - name: Download LSP Binaries from Release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          for archive in ./downloaded-artifacts/**/*.zip; do
+          mkdir -p extensions/vscode/server
+          gh release download "$LSP_TAG" \
+            --pattern "rsml-lsp-server-*.zip" \
+            --dir ./lsp-archives
+
+      - name: Extract LSP Binaries
+        run: |
+          for archive in ./lsp-archives/*.zip; do
             unzip -o "$archive" -d extensions/vscode/server
           done
 
@@ -96,7 +122,7 @@ jobs:
         run: |
           cd extensions/vscode
           zip -r ../../${{ env.ARTIFACT_NAME }} . -x ".git/*"
-      
+
       - name: Upload VSCode LSP to Artifacts
         uses: actions/upload-artifact@v4
         with:

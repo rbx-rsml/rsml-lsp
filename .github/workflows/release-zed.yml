@@ -1,0 +1,91 @@
+name: "Release Extension (Zed)"
+
+on:
+  push:
+    tags: ["zed-v*"]
+
+jobs:
+  build-zed:
+    name: Build Zed Extension
+    runs-on: ubuntu-latest
+    env:
+      BIN: rsml-lsp-zed
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Cache Rust
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            extensions/zed/target
+          key: zed-cargo-${{ hashFiles('extensions/zed/Cargo.lock') }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2025-08-07
+          targets: wasm32-wasip1
+
+      - name: Build WASM Extension
+        run: cargo build --release --target wasm32-wasip1 --manifest-path extensions/zed/Cargo.toml
+
+      - name: Save Rust Cache
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            extensions/zed/target
+          key: zed-cargo-${{ hashFiles('extensions/zed/Cargo.lock') }}
+
+      - name: Package Extension
+        run: |
+          mkdir -p staging
+          cp extensions/zed/target/wasm32-wasip1/release/rsml_zed.wasm staging/extension.wasm
+          cp extensions/zed/extension.toml staging/
+          cp -r extensions/zed/languages staging/
+          mkdir -p staging/grammars
+          cp extensions/zed/grammars/rsml.wasm staging/grammars/
+
+      - name: Get Semantic Version
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          echo "SEMVER=${TAG_NAME#zed-v}" >> "$GITHUB_ENV"
+
+      - name: Generate Artifact Name
+        shell: bash
+        run: |
+          echo "ARTIFACT_NAME=$BIN.zip" >> "$GITHUB_ENV"
+
+      - name: Create Archive
+        shell: bash
+        run: |
+          cd staging
+          zip -r ../${{ env.ARTIFACT_NAME }} .
+
+      - name: Upload to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          path: ${{ env.ARTIFACT_NAME }}
+          name: ${{ env.ARTIFACT_NAME }}
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ github.ref_name }}" > /dev/null 2>&1; then
+            echo "Release ${{ github.ref_name }} already exists. Skipping creation."
+          else
+            gh release create ${{ github.ref_name }} --verify-tag --title ${{ github.ref_name }}
+          fi
+
+      - name: Add Artifact to Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload ${{ github.ref_name }} $ARTIFACT_NAME

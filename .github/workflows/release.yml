@@ -1,10 +1,11 @@
-name: Build
+name: Release LSP
 
 on:
-  workflow_call:
+  push:
+    tags: ["lsp-v*"]
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: release-lsp-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -17,7 +18,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "$TAG_NAME" > /dev/null 2>&1; then
+          if gh release view "${{ github.ref_name }}" > /dev/null 2>&1; then
             echo "Release ${{ github.ref_name }} already exists. Skipping creation."
           else
             gh release create ${{ github.ref_name }} --draft --verify-tag --title ${{ github.ref_name }}
@@ -45,6 +46,11 @@ jobs:
             target: aarch64-apple-darwin
             label: macos-aarch64
 
+          - host: macos
+            os: macos-latest
+            target: x86_64-apple-darwin
+            label: macos-x86_64
+
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     env:
@@ -62,7 +68,7 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -115,3 +121,28 @@ jobs:
         with:
           path: ${{ env.ARTIFACT_NAME }}
           name: ${{ env.ARTIFACT_NAME }}
+
+  upload-to-release:
+    name: Upload to Release
+    needs: ["build"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Upload Archives to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for archive in ./artifacts/**/*.zip; do
+            gh release upload ${{ github.ref_name }} "$archive"
+          done
+
+      - name: Publish Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit ${{ github.ref_name }} --draft=false
