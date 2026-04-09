@@ -257,6 +257,7 @@ impl<'a> TypecheckSelectors<'a> {
 
             Token::TagSelectorOrEnumPart(_) | Token::NameSelector(_) => {
                 self.classes.push("Instance".to_string());
+                self.consume_past_comma();
             }
 
             Token::ChildrenSelector | Token::DescendantsSelector => {
