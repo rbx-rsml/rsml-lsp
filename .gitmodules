@@ -1,0 +1,3 @@
+[submodule "extensions/zed/grammars/rsml"]
+	path = extensions/zed/grammars/rsml
+	url = https://github.com/rbx-rsml/tree-sitter-rsml
