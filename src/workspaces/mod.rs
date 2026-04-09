@@ -1,5 +1,4 @@
 use std::{collections::HashMap, ops::{Deref, DerefMut}, path::{Path, PathBuf}, sync::Arc};
-use guarded::guarded_unwrap;
 use tokio::sync::Mutex;
 
 mod documents;
@@ -36,13 +35,13 @@ impl Workspaces {
     }
 
     pub async fn remove_luaurc_for_workspace(&mut self, workspace_path: &Path) -> Option<Luaurc> {
-        let workspace = guarded_unwrap!(self.get(workspace_path), return None);
+        let Some(workspace) = self.get(workspace_path) else { return None };
 
         workspace.lock().await.luaurc.take()
     }
 
     pub async fn set_luaurc_for_workspace(&mut self, workspace_path: &Path, luaurc: Luaurc) -> Option<Luaurc> {
-        let workspace = guarded_unwrap!(self.get(workspace_path), return None);
+        let Some(workspace) = self.get(workspace_path) else { return None };
 
         workspace.lock().await.luaurc.replace(luaurc)
     }

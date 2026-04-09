@@ -1,6 +1,4 @@
 use std::{mem::{self, Discriminant, MaybeUninit}};
-use guarded::guarded_unwrap;
-
 use crate::lexer::{Token, TokenKind};
 
 #[macro_export]
@@ -104,11 +102,12 @@ impl<'a, const N: usize> TokenKindList<N> {
             if let Some(stringified) = stringified { Box::new(stringified.iter().map(String::as_str)) }
             else { Box::new(items.iter().map(|x| x.0.name())) };
 
-        let mut current_item = guarded_unwrap!(iter.next(), return None);
+        let Some(mut current_item) = iter.next() else { return None };
 
         let mut msg = format!("{}", current_item);
 
-        current_item = guarded_unwrap!(iter.next(), return Some(msg));
+        let Some(next_item) = iter.next() else { return Some(msg) };
+        current_item = next_item;
 
         loop {
             let next_item = iter.next();

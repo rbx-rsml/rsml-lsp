@@ -1,7 +1,6 @@
 use crate::lazy_collection;
 use crate::string_clip::StringClip;
 use enum_kinds::EnumKind;
-use guarded::guarded_unwrap;
 use logos::{Lexer as LogosLexer, Logos, SpannedIter};
 use ropey::Rope;
 use std::{
@@ -32,7 +31,7 @@ impl<'a> Iterator for Lexer<'a> {
     type Item = SpannedToken<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (token, span) = guarded_unwrap!(self.token_stream.next(), return None);
+        let Some((token, span)) = self.token_stream.next() else { return None };
 
         match token {
             Ok(token) => match token {

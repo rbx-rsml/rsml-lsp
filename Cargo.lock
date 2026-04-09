@@ -335,12 +335,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
 
 [[package]]
-name = "guarded"
-version = "0.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fcdc98c18ecc713861ba405f190c1cf6ffb444b481ae50deadbe6f57212fcae"
-
-[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -920,7 +914,6 @@ dependencies = [
  "baz-tree-sitter-traversal",
  "enum-kinds",
  "futures",
- "guarded",
  "levenshtein",
  "logos",
  "once_cell",

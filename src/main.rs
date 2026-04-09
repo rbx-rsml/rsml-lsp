@@ -35,8 +35,6 @@ use crate::range_from_span::RangeFromSpan;
 use crate::typechecker::{CyclicKind, TypeError};
 use crate::workspaces::Workspace;
 
-mod guarded_unwrap;  
-
 mod list;
 
 mod luaurc;
@@ -269,8 +267,7 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change(&self, params: tower_lsp::lsp_types::DidChangeTextDocumentParams) {
-        let change =
-            guarded_unwrap!(params.content_changes.iter().next(), return);
+        let Some(change) = params.content_changes.iter().next() else { return };
         
         let mut documents = self.documents.lock().await;
 
@@ -296,7 +293,7 @@ impl LanguageServer for Backend {
             if let Some(workspace_mutex) = self.workspace_for_path(&path, &mut self.workspaces.lock().await).await {
                 let mut workspace = workspace_mutex.lock().await;
 
-                let luaurc = guarded_unwrap!(&mut workspace.luaurc, break);
+                let Some(luaurc) = &mut workspace.luaurc else { break };
 
                 luaurc.dependants.remove_by_right(path);
             };
@@ -310,14 +307,14 @@ impl LanguageServer for Backend {
         let mut workspaces = self.workspaces.lock().await;
 
         for folder in params.event.added {
-            let workspace_path = guarded_unwrap!(folder.uri.to_file_path(), continue);
+            let Ok(workspace_path) = folder.uri.to_file_path() else { continue };
 
             let workspace = Workspace::new(resolve_luaurc(&workspace_path).await);
             workspaces.insert(workspace_path.clone(), Arc::new(Mutex::new(workspace)));
         }
 
         for folder in params.event.removed {
-            let workspace_path = guarded_unwrap!(folder.uri.to_file_path(), continue);
+            let Ok(workspace_path) = folder.uri.to_file_path() else { continue };
 
             workspaces.remove(&workspace_path);
         }
@@ -325,7 +322,7 @@ impl LanguageServer for Backend {
 
     async fn did_change_watched_files(&self, params: tower_lsp::lsp_types::DidChangeWatchedFilesParams) {
         for change in params.changes {
-            let path = guarded_unwrap!(change.uri.to_file_path(), return);
+            let Ok(path) = change.uri.to_file_path() else { return };
 
             if !path.is_file() { return };
 
@@ -337,18 +334,17 @@ impl LanguageServer for Backend {
                 path.extension() == Some(OsStr::new("luaurc"))
             ) { return }
 
-            let workspace_path = guarded_unwrap!(path.join("../").canonicalize(), return);
+            let Ok(workspace_path) = path.join("../").canonicalize() else { return };
 
             match change.typ {
                 FileChangeType::CHANGED => {
                     let workspaces_mutex = self.workspaces.clone();
                     let workspaces = workspaces_mutex.lock().await;
 
-                    let mut workspace =
-                        guarded_unwrap!(workspaces.get(&workspace_path), return)
-                            .lock().await;
+                    let Some(workspace_mutex) = workspaces.get(&workspace_path) else { return };
+                    let mut workspace = workspace_mutex.lock().await;
 
-                    let old_luaurc = guarded_unwrap!(workspace.luaurc.take(), return);
+                    let Some(old_luaurc) = workspace.luaurc.take() else { return };
 
                     let old_aliases = old_luaurc.aliases;
                     let new_aliases = Aliases::from_path(&path).await;
@@ -362,18 +358,18 @@ impl LanguageServer for Backend {
                     let mut documents = self.documents.lock().await;
 
                     for changed_alias in luaurc_alias_diff {
-                        let changed_dependencies =
-                            guarded_unwrap!(new_luaurc.dependants.get_by_left(&changed_alias), continue)
+                        let Some(changed_dependencies) = new_luaurc.dependants.get_by_left(&changed_alias) else { continue };
+                        let changed_dependencies = changed_dependencies
                                 .iter()
                                 .cloned()
                                 .collect::<Vec<_>>();
 
                         for document_path in changed_dependencies {
-                            let document_mutex =
-                                guarded_unwrap!(documents.get(document_path.as_ref()), continue).clone();
+                            let Some(document_mutex) = documents.get(document_path.as_ref()) else { continue };
+                            let document_mutex = document_mutex.clone();
                             let document = document_mutex.lock().await;
 
-                            let uri = guarded_unwrap!(Url::from_file_path(document_path.as_ref()), continue);
+                            let Ok(uri) = Url::from_file_path(document_path.as_ref()) else { continue };
 
                             let (_, new_document) = self.diagnose_document(
                                 &document.source, uri, Status::Some(new_luaurc), Some(&workspaces), &mut documents, Some(&document), None
@@ -393,27 +389,26 @@ impl LanguageServer for Backend {
                     let workspaces_mutex = self.workspaces.clone();
                     let workspaces = workspaces_mutex.lock().await;
 
-                    let mut workspace =
-                        guarded_unwrap!(workspaces.get(&workspace_path), return)
-                            .lock().await;
+                    let Some(workspace_mutex) = workspaces.get(&workspace_path) else { return };
+                    let mut workspace = workspace_mutex.lock().await;
 
-                    let deleted_luaurc = guarded_unwrap!(workspace.luaurc.take(), return);
+                    let Some(deleted_luaurc) = workspace.luaurc.take() else { return };
 
                     let mut documents = self.documents.lock().await;
 
                     for alias in deleted_luaurc.aliases.keys() {
-                        let changed_dependencies =
-                            guarded_unwrap!(deleted_luaurc.dependants.get_by_left(alias), continue)
+                        let Some(changed_dependencies) = deleted_luaurc.dependants.get_by_left(alias) else { continue };
+                        let changed_dependencies = changed_dependencies
                                 .iter()
                                 .cloned()
                                 .collect::<Vec<_>>();
 
                         for document_path in changed_dependencies {
-                            let document_mutex =
-                                guarded_unwrap!(documents.get(document_path.as_ref()), continue).clone();
+                            let Some(document_mutex) = documents.get(document_path.as_ref()) else { continue };
+                            let document_mutex = document_mutex.clone();
                             let document = document_mutex.lock().await;
 
-                            let uri = guarded_unwrap!(Url::from_file_path(document_path.as_ref()), continue);
+                            let Ok(uri) = Url::from_file_path(document_path.as_ref()) else { continue };
 
                             let (_, new_document) = self.diagnose_document(
                                 &document.source, uri, Status::None, Some(&workspaces), &mut documents, Some(&document), None
@@ -434,10 +429,11 @@ impl LanguageServer for Backend {
         let position = params.text_document_position_params.position;
         let uri = params.text_document_position_params.text_document.uri;
 
-        let current_path = guarded_unwrap!(uri.to_file_path(), return Ok(None));
+        let Ok(current_path) = uri.to_file_path() else { return Ok(None) };
 
         let documents = self.documents.lock().await;
-        let document_mutex = guarded_unwrap!(documents.get(&current_path), return Ok(None)).clone();
+        let Some(document_mutex) = documents.get(&current_path) else { return Ok(None) };
+        let document_mutex = document_mutex.clone();
         let document = document_mutex.lock().await;
 
         let byte_offset = position.byte_offset(&document.source);
@@ -476,10 +472,11 @@ impl LanguageServer for Backend {
         let position = params.text_document_position_params.position;
         let uri = params.text_document_position_params.text_document.uri;
 
-        let current_path = guarded_unwrap!(uri.to_file_path(), return Ok(None));
+        let Ok(current_path) = uri.to_file_path() else { return Ok(None) };
 
         let documents = self.documents.lock().await;
-        let document_mutex = guarded_unwrap!(documents.get(&current_path), return Ok(None)).clone();
+        let Some(document_mutex) = documents.get(&current_path) else { return Ok(None) };
+        let document_mutex = document_mutex.clone();
         let document = document_mutex.lock().await;
 
 
@@ -596,12 +593,10 @@ impl<'a> Backend {
     }
 
     async fn workspace_for_path(&self, path: &Path, workspaces: &MutexGuard<'_, Workspaces>) -> Option<Arc<Mutex<Workspace>>> {
-        let (_, workspace) = guarded_unwrap!(
-            workspaces
+        let Some((_, workspace)) = workspaces
                 .iter()
-                .find(|(x, _)| path.starts_with(x)),
-                return None
-        );
+                .find(|(x, _)| path.starts_with(x))
+        else { return None };
 
         let workspace = workspace.clone();
 
@@ -673,12 +668,11 @@ impl<'a> Backend {
                                         None => &self.workspaces.lock().await
                                     };  
 
-                                    let workspace_mutex =
-                                        guarded_unwrap!(self.workspace_for_path(&current_path, workspaces).await, break 'inner);
+                                    let Some(workspace_mutex) = self.workspace_for_path(&current_path, workspaces).await else { break 'inner };
 
                                     let mut workspace = workspace_mutex.lock().await;
 
-                                    let luaurc = guarded_unwrap!(&mut workspace.luaurc, break 'inner);
+                                    let Some(luaurc) = &mut workspace.luaurc else { break 'inner };
 
                                     break 'outer Typechecker::new(parsed, &current_path, Some(luaurc), &mut document).await
                                 }
@@ -745,12 +739,10 @@ impl<'a> Backend {
 
                         // We get the document back out.
                         let document_option = 'block: {
-                            let document_mutex =
-                                guarded_unwrap!(documents.remove(&current_path), break 'block None);
+                            let Some(document_mutex) = documents.remove(&current_path) else { break 'block None };
 
-                            guarded_unwrap!(Arc::try_unwrap(document_mutex), break 'block  None)
-                                .into_inner()
-                                .into()
+                            let Ok(document_lock) = Arc::try_unwrap(document_mutex) else { break 'block None };
+                            document_lock.into_inner().into()
                         };
                         // This *should* always be Some unless something's gone terribly wrong.
                         document = document_option.unwrap();
@@ -761,7 +753,7 @@ impl<'a> Backend {
                             gather_dependencies(&current_path, &document, documents).await;
 
                         for (cyclic_path, ancestry_chain) in &gathered_dependencies.cyclic_dependencies {
-                            let span = guarded_unwrap!(derives.get(cyclic_path), continue);
+                            let Some(span) = derives.get(cyclic_path) else { continue };
 
                             typechecked.parsed.ast_errors.push(
                                 TypeError::CyclicDerive { kind: CyclicKind::External(ancestry_chain) },
@@ -803,12 +795,11 @@ impl<'a> Backend {
         documents: &'a mut MutexGuard<'b, Documents>,
         luaurc: Status<&'a mut Luaurc>
     ) {
-        let dependant_uri =
-            guarded_unwrap!(Url::from_file_path(&dependant_path), return);
+        let Ok(dependant_uri) = Url::from_file_path(&dependant_path) else { return };
 
         let dependant_source = match documents.get(&dependant_path) {
             Some(document) => document.lock().await.source.to_string(),
-            None => guarded_unwrap!(fs::read_to_string(&dependant_path).await, return)
+            None => { let Ok(source) = fs::read_to_string(&dependant_path).await else { return }; source }
         };
 
         let workspace_path_for_dependant_path = 
@@ -835,14 +826,14 @@ impl<'a> Backend {
         documents: &'a mut MutexGuard<'b, Documents>,
     ) -> Pin<Box<dyn Future<Output = ()> + 'a + Send>> {
         Box::pin(async move {
-            let mut dir = guarded_unwrap!(fs::read_dir(&entry_path).await, return);
+            let Ok(mut dir) = fs::read_dir(&entry_path).await else { return };
 
             while let Ok(Some(entry)) = dir.next_entry().await {
                 let path = entry.path();
 
                 if path.is_file() && path.extension() == Some(OsStr::new("rsml")) {
-                    let uri = guarded_unwrap!(Url::from_file_path(&path), continue);
-                    let source = guarded_unwrap!(fs::read_to_string(&path).await, continue);
+                    let Ok(uri) = Url::from_file_path(&path) else { continue };
+                    let Ok(source) = fs::read_to_string(&path).await else { continue };
 
                     let (current_path, document) =
                         self.diagnose_document(
@@ -917,7 +908,7 @@ async fn gather_dependencies(
             document
 
         } else {
-            let document_mutex = guarded_unwrap!(documents.get(&node), continue);
+            let Some(document_mutex) = documents.get(&node) else { continue };
             &document_mutex.lock().await
         };
 

@@ -1,0 +1,15 @@
+id = "rsml"
+name = "RSML"
+description = "Support for RSML (Roblox Style Management Language)"
+version = "0.0.1"
+schema_version = 1
+authors = ["rbx-rsml"]
+repository = "https://github.com/rbx-rsml/rsml-lsp"
+
+[grammars.rsml]
+repository = "https://github.com/rbx-rsml/tree-sitter-rsml"
+commit = "393f845e05b25cad8a0399610eef644aa5b35e14"
+
+[language_servers.rsml-lsp]
+name = "RSML LSP"
+languages = ["RSML"]

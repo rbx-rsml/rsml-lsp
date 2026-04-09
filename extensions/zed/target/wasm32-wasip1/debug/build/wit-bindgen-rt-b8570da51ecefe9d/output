@@ -1,0 +1,2 @@
+cargo:rustc-link-lib=static=wit_bindgen_cabi_realloc0_41_0
+cargo:rustc-link-search=native=/Volumes/T7/rsml-new/rsml-lsp/extensions/zed/target/wasm32-wasip1/debug/build/wit-bindgen-rt-b8570da51ecefe9d/out

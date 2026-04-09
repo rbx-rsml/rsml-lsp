@@ -1,0 +1,14 @@
+/Volumes/T7/rsml-new/rsml-lsp/extensions/zed/target/debug/deps/serde-31dd66ea90d2a039.d: /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Volumes/T7/rsml-new/rsml-lsp/extensions/zed/target/debug/build/serde-7048dbbe5806dead/out/private.rs
+
+/Volumes/T7/rsml-new/rsml-lsp/extensions/zed/target/debug/deps/libserde-31dd66ea90d2a039.rlib: /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Volumes/T7/rsml-new/rsml-lsp/extensions/zed/target/debug/build/serde-7048dbbe5806dead/out/private.rs
+
+/Volumes/T7/rsml-new/rsml-lsp/extensions/zed/target/debug/deps/libserde-31dd66ea90d2a039.rmeta: /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Volumes/T7/rsml-new/rsml-lsp/extensions/zed/target/debug/build/serde-7048dbbe5806dead/out/private.rs
+
+/Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Volumes/T7/rsml-new/rsml-lsp/extensions/zed/target/debug/build/serde-7048dbbe5806dead/out/private.rs:
+
+# env-dep:OUT_DIR=/Volumes/T7/rsml-new/rsml-lsp/extensions/zed/target/debug/build/serde-7048dbbe5806dead/out

@@ -1,0 +1,9 @@
+/Volumes/T7/rsml-new/rsml-lsp/extensions/zed/target/debug/deps/auditable_serde-5b76e02833e32e5c.d: /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/auditable-serde-0.8.0/src/lib.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/auditable-serde-0.8.0/src/validation.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/auditable-serde-0.8.0/src/../README.md
+
+/Volumes/T7/rsml-new/rsml-lsp/extensions/zed/target/debug/deps/libauditable_serde-5b76e02833e32e5c.rlib: /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/auditable-serde-0.8.0/src/lib.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/auditable-serde-0.8.0/src/validation.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/auditable-serde-0.8.0/src/../README.md
+
+/Volumes/T7/rsml-new/rsml-lsp/extensions/zed/target/debug/deps/libauditable_serde-5b76e02833e32e5c.rmeta: /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/auditable-serde-0.8.0/src/lib.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/auditable-serde-0.8.0/src/validation.rs /Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/auditable-serde-0.8.0/src/../README.md
+
+/Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/auditable-serde-0.8.0/src/lib.rs:
+/Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/auditable-serde-0.8.0/src/validation.rs:
+/Users/cameroncampbell/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/auditable-serde-0.8.0/src/../README.md:
