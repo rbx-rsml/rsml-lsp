@@ -1,5 +1,7 @@
 use std::{mem::discriminant, slice::Iter};
 
+use indexmap::IndexSet;
+
 use crate::{
     Document,
     lexer::{SpannedToken, Token, TokenKind},
@@ -60,6 +62,8 @@ impl<'a> Typechecker<'a> {
             document,
         )
         .classes
+        .into_iter()
+        .collect()
     }
 }
 
@@ -90,7 +94,7 @@ static ALLOWED_STATE_SELECTORS: phf::Set<&str> = phf_set! {
 struct TypecheckSelectors<'a> {
     iter: Iter<'a, Node<'a>>,
     parent_classes: &'a Vec<String>,
-    classes: Vec<String>,
+    classes: IndexSet<String>,
 
     part: Option<&'a Node<'a>>,
     has_name: bool,
@@ -110,7 +114,7 @@ impl<'a> TypecheckSelectors<'a> {
         let mut typecheck_selectors = Self {
             iter: selectors.iter(),
             parent_classes,
-            classes: Vec::new(),
+            classes: IndexSet::new(),
             part: None,
             has_name: false,
             rope,
@@ -149,14 +153,14 @@ impl<'a> TypecheckSelectors<'a> {
 
         document.definitions.insert(
             span_start..=span_end,
-            DefinitionKind::selector(self.classes.clone()),
+            DefinitionKind::selector(self.classes.iter().cloned().collect()),
         );
     }
 
     fn from_new(&mut self, part: &'a Node<'a>) {
         match part.token.value() {
             Token::TagSelectorOrEnumPart(_) | Token::NameSelector(_) => {
-                self.classes.push("Instance".to_string());
+                self.classes.insert("Instance".to_string());
                 self.consume_past_comma();
             }
 
@@ -171,11 +175,11 @@ impl<'a> TypecheckSelectors<'a> {
                     ConsumeResult::Some(part) => match part.token.value() {
                         Token::PseudoSelector(class) => {
                             let validated_class = self.validate_pseudo_class(class, &part.token);
-                            self.classes.push(validated_class.to_string());
+                            self.classes.insert(validated_class.to_string());
                         }
 
                         Token::StateSelectorOrEnumPart(class) => {
-                            self.classes.push(validated_class.to_string());
+                            self.classes.insert(validated_class.to_string());
 
                             self.validate_state(class, &part.token);
                         }
@@ -185,7 +189,7 @@ impl<'a> TypecheckSelectors<'a> {
 
                     ConsumeResult::Err(delimiter) => {
                         if matches!(delimiter.token.value(), Token::Comma) {
-                            self.classes.push(validated_class.to_string());
+                            self.classes.insert(validated_class.to_string());
                         }
 
                         let Some(part) = self.next() else { return };
@@ -193,7 +197,7 @@ impl<'a> TypecheckSelectors<'a> {
                     }
 
                     ConsumeResult::None => {
-                        self.classes.push(validated_class.to_string());
+                        self.classes.insert(validated_class.to_string());
                     }
                 }
             }
@@ -215,7 +219,7 @@ impl<'a> TypecheckSelectors<'a> {
                 }
 
                 let validated_class = self.validate_class(class, &part.token);
-                self.classes.push(validated_class.to_string());
+                self.classes.insert(validated_class.to_string());
 
                 match self.consume_with_error(
                     TokenKind::Identifier,
@@ -226,7 +230,7 @@ impl<'a> TypecheckSelectors<'a> {
                         Token::PseudoSelector(class) => {
                             self.classes.pop();
                             let validated_class = self.validate_pseudo_class(class, &part.token);
-                            self.classes.push(validated_class.to_string());
+                            self.classes.insert(validated_class.to_string());
                         }
 
                         Token::StateSelectorOrEnumPart(state) => {
@@ -247,7 +251,7 @@ impl<'a> TypecheckSelectors<'a> {
 
             Token::PseudoSelector(class) => {
                 let validated_class = self.validate_pseudo_class(class, &part.token);
-                self.classes.push(validated_class.to_string());
+                self.classes.insert(validated_class.to_string());
             }
 
             Token::StateSelectorOrEnumPart(state) => {
@@ -256,7 +260,7 @@ impl<'a> TypecheckSelectors<'a> {
             }
 
             Token::TagSelectorOrEnumPart(_) | Token::NameSelector(_) => {
-                self.classes.push("Instance".to_string());
+                self.classes.insert("Instance".to_string());
                 self.consume_past_comma();
             }
 

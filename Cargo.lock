@@ -914,6 +914,7 @@ dependencies = [
  "baz-tree-sitter-traversal",
  "enum-kinds",
  "futures",
+ "indexmap",
  "levenshtein",
  "logos",
  "once_cell",

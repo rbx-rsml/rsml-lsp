@@ -415,4 +415,79 @@ mod tests {
         assert_eq!(result.selectors[1].2, vec!["Instance", "TextButton"]);
         assert!(result.errors.is_empty());
     }
+
+    // ── Deduplication ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn duplicate_comma_selectors_are_deduplicated() {
+        let result = typecheck("Frame, Frame, TextButton {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["Frame", "TextButton"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn all_duplicate_selectors() {
+        let result = typecheck("Frame, Frame, Frame {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["Frame"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn duplicate_with_combinator() {
+        let result = typecheck("Frame > TextButton, Frame > TextButton {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["TextButton"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn duplicate_instance_coercion() {
+        let result = typecheck(".Hello, .World {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["Instance"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn duplicate_with_state_selectors() {
+        let result = typecheck("Frame :hover, Frame :press {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["Frame"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn duplicate_pseudo_selectors() {
+        let result = typecheck("Frame ::UIPadding, TextButton ::UIPadding {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["UIPadding"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn nested_duplicate_selectors() {
+        let result = typecheck("Frame { > TextButton, > TextButton {} }").await;
+        assert_eq!(result.selectors.len(), 2);
+        assert_eq!(result.selectors[0].2, vec!["Frame"]);
+        assert_eq!(result.selectors[1].2, vec!["TextButton"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn no_dedup_different_types() {
+        let result = typecheck("Frame, TextButton {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["Frame", "TextButton"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn preserves_order_after_dedup() {
+        let result = typecheck("TextButton, Frame, TextButton {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["TextButton", "Frame"]);
+        assert!(result.errors.is_empty());
+    }
 }
