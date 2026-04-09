@@ -921,6 +921,7 @@ dependencies = [
  "phf",
  "phf_macros",
  "rangemap",
+ "rbx_reflection",
  "rbx_reflection_database",
  "ropey",
  "serde",

@@ -32,6 +32,16 @@ impl<'a> Typechecker<'a> {
         };
 
         let Some(body) = body.as_ref() else { return };
+
+        let body_start = body.left.token.start();
+        let body_end = body.right.as_ref()
+            .map(|r| r.token.end())
+            .unwrap_or(body.left.token.end());
+        document.definitions.insert(
+            body_start..=body_end,
+            DefinitionKind::Scope { type_definition: current_classes.clone() },
+        );
+
         let Some(content) = body.content.as_ref() else {
             return;
         };
@@ -40,6 +50,62 @@ impl<'a> Typechecker<'a> {
             match construct {
                 Construct::Rule { selectors, body } => {
                     self.typecheck_rule((selectors, body), &current_classes, ast_errors, document)
+                }
+
+                Construct::Assignment { left, middle, right, terminator } => {
+                    let Token::Identifier(property_name) = left.token.value() else { continue };
+                    let Some(middle) = middle else { continue };
+
+                    let assign_start = middle.token.start();
+                    let assign_end = terminator.as_ref()
+                        .map(|t| t.token.end())
+                        .or_else(|| right.as_ref().map(|r| r.span().1))
+                        .unwrap_or(middle.token.end());
+
+                    document.definitions.insert(
+                        assign_start..=assign_end,
+                        DefinitionKind::Assignment {
+                            property_name: property_name.to_string(),
+                            type_definition: current_classes.clone(),
+                        },
+                    );
+
+                    let Some(right) = right else { continue };
+                    match right.as_ref() {
+                        Construct::Enum { keyword, name, variant } => {
+                            let name_range_start = keyword.token.end();
+                            let name_range_end = name.as_ref()
+                                .map(|node| node.token.end())
+                                .unwrap_or(assign_end);
+
+                            document.definitions.insert(
+                                name_range_start..=name_range_end,
+                                DefinitionKind::EnumName,
+                            );
+
+                            if let Some(name_node) = name {
+                                let enum_name = match name_node.token.value() {
+                                    Token::TagSelectorOrEnumPart(name) => name,
+                                    Token::StateSelectorOrEnumPart(name) => name,
+                                    _ => continue,
+                                };
+
+                                let variant_range_start = name_node.token.end();
+                                let variant_range_end = variant.as_ref()
+                                    .map(|node| node.token.end())
+                                    .unwrap_or(assign_end);
+
+                                document.definitions.insert(
+                                    variant_range_start..=variant_range_end,
+                                    DefinitionKind::EnumVariant {
+                                        enum_name: enum_name.to_string(),
+                                    },
+                                );
+                            }
+                        }
+
+                        _ => (),
+                    }
                 }
 
                 _ => (),

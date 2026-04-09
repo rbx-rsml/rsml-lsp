@@ -70,6 +70,17 @@ pub enum DefinitionKind {
         type_definition: Vec<String>,
         hint: String,
     },
+    Scope {
+        type_definition: Vec<String>,
+    },
+    Assignment {
+        property_name: String,
+        type_definition: Vec<String>,
+    },
+    EnumName,
+    EnumVariant {
+        enum_name: String,
+    },
 }
 
 impl DefinitionKind {
@@ -150,6 +161,7 @@ mod tests {
 
     struct TypecheckResult {
         selectors: Vec<(usize, usize, Vec<String>)>,
+        scopes: Vec<(usize, usize, Vec<String>)>,
         errors: Vec<String>,
     }
 
@@ -177,6 +189,21 @@ mod tests {
             })
             .collect();
 
+        let scopes: Vec<(usize, usize, Vec<String>)> = document
+            .definitions
+            .iter()
+            .filter_map(|(range, kind)| {
+                if let DefinitionKind::Scope {
+                    type_definition, ..
+                } = kind
+                {
+                    Some((*range.start(), *range.end(), type_definition.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         let errors: Vec<String> = typechecker
             .parsed
             .ast_errors
@@ -185,7 +212,11 @@ mod tests {
             .map(|diagnostic| diagnostic.message.clone())
             .collect();
 
-        TypecheckResult { selectors, errors }
+        TypecheckResult {
+            selectors,
+            scopes,
+            errors,
+        }
     }
 
     // ── Top-level selectors ────────────────────────────────────────
@@ -270,8 +301,6 @@ mod tests {
         );
     }
 
-    // ── Nested selectors ───────────────────────────────────────────
-
     #[tokio::test]
     async fn nested_class_without_combinator_errors() {
         let result = typecheck("Frame { TextButton {} }").await;
@@ -317,7 +346,12 @@ mod tests {
         assert_eq!(result.selectors[1].2, vec!["TextButton"]);
         assert_eq!(result.selectors[2].2, vec!["TextLabel"]);
         assert_eq!(result.errors.len(), 2);
-        assert!(result.errors.iter().all(|err| err.contains("can't be nested")));
+        assert!(
+            result
+                .errors
+                .iter()
+                .all(|err| err.contains("can't be nested"))
+        );
     }
 
     #[tokio::test]
@@ -489,5 +523,44 @@ mod tests {
         assert_eq!(result.selectors.len(), 1);
         assert_eq!(result.selectors[0].2, vec!["TextButton", "Frame"]);
         assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn scope_inserted_for_rule_body() {
+        let result = typecheck("Frame {}").await;
+        assert_eq!(result.scopes.len(), 1);
+        assert_eq!(result.scopes[0].2, vec!["Frame"]);
+    }
+
+    #[tokio::test]
+    async fn scope_has_union_types() {
+        let result = typecheck("Frame, TextButton {}").await;
+        assert_eq!(result.scopes.len(), 1);
+        assert_eq!(result.scopes[0].2, vec!["Frame", "TextButton"]);
+    }
+
+    #[tokio::test]
+    async fn nested_scopes_have_correct_types() {
+        let result = typecheck("Frame { > TextButton {} }").await;
+        // Outer scope gets split by inner scope insertion, so 3 entries:
+        // two halves of the outer Frame scope + the inner TextButton scope
+        assert!(result.scopes.len() >= 2);
+        let scope_types: Vec<&Vec<String>> = result.scopes.iter().map(|s| &s.2).collect();
+        assert!(scope_types.contains(&&vec!["Frame".to_string()]));
+        assert!(scope_types.contains(&&vec!["TextButton".to_string()]));
+    }
+
+    #[tokio::test]
+    async fn scope_with_combinator() {
+        let result = typecheck("Frame > TextButton {}").await;
+        assert_eq!(result.scopes.len(), 1);
+        assert_eq!(result.scopes[0].2, vec!["TextButton"]);
+    }
+
+    #[tokio::test]
+    async fn scope_with_pseudo_selector() {
+        let result = typecheck("Frame ::UIPadding {}").await;
+        assert_eq!(result.scopes.len(), 1);
+        assert_eq!(result.scopes[0].2, vec!["UIPadding"]);
     }
 }
