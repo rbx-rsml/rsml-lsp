@@ -23,8 +23,8 @@
 (color_code_css) @string
 
 ; Enums
-(enum_full) @tag
-(enum_shorthand) @tag
+(enum_full) @enum
+(enum_shorthand) @enum
 
 ; Keywords / Declarations
 "@macro" @keyword

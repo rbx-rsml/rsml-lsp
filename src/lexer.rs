@@ -146,11 +146,11 @@ pub enum Token<'a> {
     #[regex(r"#(?&ident)", callback = |lex| str_to_option(&lex.slice()[1..]))]
     NameSelector(&'a str),
 
-    #[regex(r"\.(?&ident)", callback = |lex| str_to_option(&lex.slice()[1..]))]
-    TagSelectorOrEnumPart(&'a str),
+    #[regex(r"\.(?&ident)?", callback = |lex| str_to_option(&lex.slice()[1..]))]
+    TagSelectorOrEnumPart(Option<&'a str>),
 
-    #[regex(r":(?&ident)", callback = |lex| str_to_option(&lex.slice()[1..]))]
-    StateSelectorOrEnumPart(&'a str),
+    #[regex(r":(?&ident)?", callback = |lex| str_to_option(&lex.slice()[1..]))]
+    StateSelectorOrEnumPart(Option<&'a str>),
 
     #[regex(r"::(?&ident)", callback = |lex| str_to_option(&lex.slice()[2..]))]
     PseudoSelector(&'a str),

@@ -85,8 +85,8 @@ impl<'a> Typechecker<'a> {
 
                             if let Some(name_node) = name {
                                 let enum_name = match name_node.token.value() {
-                                    Token::TagSelectorOrEnumPart(name) => name,
-                                    Token::StateSelectorOrEnumPart(name) => name,
+                                    Token::TagSelectorOrEnumPart(Some(name)) => name,
+                                    Token::StateSelectorOrEnumPart(Some(name)) => name,
                                     _ => continue,
                                 };
 
@@ -244,7 +244,7 @@ impl<'a> TypecheckSelectors<'a> {
                             self.classes.insert(validated_class.to_string());
                         }
 
-                        Token::StateSelectorOrEnumPart(class) => {
+                        Token::StateSelectorOrEnumPart(Some(class)) => {
                             self.classes.insert(validated_class.to_string());
 
                             self.validate_state(class, &part.token);
@@ -299,7 +299,7 @@ impl<'a> TypecheckSelectors<'a> {
                             self.classes.insert(validated_class.to_string());
                         }
 
-                        Token::StateSelectorOrEnumPart(state) => {
+                        Token::StateSelectorOrEnumPart(Some(state)) => {
                             self.validate_state(state, &part.token);
                         }
 
@@ -320,7 +320,7 @@ impl<'a> TypecheckSelectors<'a> {
                 self.classes.insert(validated_class.to_string());
             }
 
-            Token::StateSelectorOrEnumPart(state) => {
+            Token::StateSelectorOrEnumPart(Some(state)) => {
                 self.classes.extend(self.parent_classes.iter().cloned());
                 self.validate_state(state, &part.token);
             }

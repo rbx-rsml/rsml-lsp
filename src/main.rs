@@ -206,7 +206,13 @@ impl LanguageServer for Backend {
 
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
 
-                completion_provider: Some(CompletionOptions::default()),
+                completion_provider: Some(CompletionOptions {
+                    trigger_characters: Some(vec![
+                        ":".to_string(),
+                        ".".to_string(),
+                    ]),
+                    ..CompletionOptions::default()
+                }),
 
                 workspace: Some(WorkspaceServerCapabilities {
                     file_operations: Some(WorkspaceFileOperationsServerCapabilities {
@@ -1434,5 +1440,140 @@ mod tests {
         // Should use UIFlexMode enum, not FlexMode
         let items_from_override = get_enum_variant_completions("UIFlexMode");
         assert_eq!(items.len(), items_from_override.len());
+    }
+
+    #[test]
+    fn enum_shorthand_scale_type_on_image_label() {
+        let items = get_enum_shorthand_completions(
+            &vec!["ImageLabel".to_string()],
+            "ScaleType",
+        );
+        assert!(!items.is_empty(), "ScaleType enum shorthand should return variants for ImageLabel");
+    }
+
+    #[test]
+    fn enum_shorthand_non_enum_property_returns_empty() {
+        let items = get_enum_shorthand_completions(
+            &vec!["Frame".to_string()],
+            "Size",
+        );
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn enum_shorthand_unknown_property_returns_empty() {
+        let items = get_enum_shorthand_completions(
+            &vec!["Frame".to_string()],
+            "NotARealProperty",
+        );
+        assert!(items.is_empty());
+    }
+
+    async fn typecheck_and_get_definitions(source: &str) -> Document {
+        use crate::typechecker::Typechecker;
+        use crate::parser::Parser;
+        use crate::lexer::Lexer;
+        use std::path::PathBuf;
+
+        let lexer = Lexer::new(source);
+        let parsed = Parser::new(lexer);
+        let mut document = Document::new(source.to_string());
+        let dummy_path = PathBuf::from("/test.rsml");
+        Typechecker::new(parsed, &dummy_path, None, &mut document).await;
+        document
+    }
+
+    #[tokio::test]
+    async fn definitions_shorthand_colon() {
+        let source = "ImageLabel :hover {\n    ScaleType = :\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let on_colon = source.find("= :").unwrap() + 2;
+        let after_colon = on_colon + 1;
+
+        for byte_pos in [on_colon, after_colon] {
+            let entry = document.definitions.get_key_value(&byte_pos);
+            assert!(entry.is_some(), "should have entry at byte {}", byte_pos);
+            match entry.unwrap().1 {
+                DefinitionKind::Assignment { property_name, type_definition } => {
+                    assert_eq!(property_name, "ScaleType");
+                    assert!(type_definition.contains(&"ImageLabel".to_string()));
+                }
+                other => panic!("expected Assignment at byte {}, got {:?}", byte_pos, std::mem::discriminant(other)),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn definitions_enum_dot_name_completions() {
+        let source = "Frame {\n    AutomaticSize = Enum.\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let dot_pos = source.find("Enum.").unwrap() + 5;
+        let entry = document.definitions.get_key_value(&dot_pos);
+        assert!(entry.is_some(), "should have entry at byte {} (after 'Enum.')", dot_pos);
+        assert!(matches!(entry.unwrap().1, DefinitionKind::EnumName),
+            "expected EnumName at byte {}", dot_pos);
+    }
+
+    #[tokio::test]
+    async fn definitions_enum_colon_name_completions() {
+        let source = "Frame {\n    AutomaticSize = Enum:\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let colon_pos = source.find("Enum:").unwrap() + 5;
+        let entry = document.definitions.get_key_value(&colon_pos);
+        assert!(entry.is_some(), "should have entry at byte {} (after 'Enum:')", colon_pos);
+        assert!(matches!(entry.unwrap().1, DefinitionKind::EnumName),
+            "expected EnumName at byte {}", colon_pos);
+    }
+
+    #[tokio::test]
+    async fn definitions_enum_variant_after_name_dot() {
+        let source = "Frame {\n    AutomaticSize = Enum.AutomaticSize.\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let trailing_dot = source.find("AutomaticSize.").unwrap() + 14;
+        let entry = document.definitions.get_key_value(&trailing_dot);
+        assert!(entry.is_some(), "should have entry at byte {} (after 'Enum.AutomaticSize.')", trailing_dot);
+        match entry.unwrap().1 {
+            DefinitionKind::EnumVariant { enum_name } => {
+                assert_eq!(enum_name, "AutomaticSize");
+            }
+            other => panic!("expected EnumVariant at byte {}, got {:?}", trailing_dot, std::mem::discriminant(other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn definitions_enum_variant_after_name_colon() {
+        let source = "Frame {\n    AutomaticSize = Enum:AutomaticSize:\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let trailing_colon = source.rfind(':').unwrap() + 1;
+        let entry = document.definitions.get_key_value(&trailing_colon);
+        assert!(entry.is_some(), "should have entry at byte {} (after 'Enum:AutomaticSize:')", trailing_colon);
+        match entry.unwrap().1 {
+            DefinitionKind::EnumVariant { enum_name } => {
+                assert_eq!(enum_name, "AutomaticSize");
+            }
+            other => panic!("expected EnumVariant at byte {}, got {:?}", trailing_colon, std::mem::discriminant(other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn definitions_non_enum_assignment_returns_empty_completions() {
+        let source = "Frame {\n    Size = \n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let after_equals = source.find("= ").unwrap() + 2;
+        let entry = document.definitions.get_key_value(&after_equals);
+        assert!(entry.is_some(), "should have entry at byte {}", after_equals);
+        match entry.unwrap().1 {
+            DefinitionKind::Assignment { property_name, type_definition } => {
+                let items = get_enum_shorthand_completions(type_definition, property_name);
+                assert!(items.is_empty(), "Size is not an enum, should return empty completions");
+            }
+            _ => (),
+        }
     }
 }
