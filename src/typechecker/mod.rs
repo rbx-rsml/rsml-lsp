@@ -673,4 +673,37 @@ mod tests {
         assert_eq!(result.selectors[1].2, vec!["TextButton", "TextLabel"]);
         assert!(result.errors.is_empty());
     }
+
+    #[tokio::test]
+    async fn nested_comma_after_pseudo_selector_continues() {
+        let result = typecheck("Frame { ::UIPadding, ::UICorner {} }").await;
+        assert_eq!(result.selectors.len(), 2);
+        assert_eq!(result.selectors[1].2, vec!["UIPadding", "UICorner"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn nested_standalone_pseudo_selector_resolves() {
+        let result = typecheck("Frame { ::UIPadding {} }").await;
+        assert_eq!(result.selectors.len(), 2);
+        assert_eq!(result.selectors[0].2, vec!["Frame"]);
+        assert_eq!(result.selectors[1].2, vec!["UIPadding"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn nested_comma_after_state_selector_inherits_parent() {
+        let result = typecheck("Frame { :hover, :press {} }").await;
+        assert_eq!(result.selectors.len(), 2);
+        assert_eq!(result.selectors[1].2, vec!["Frame"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn nested_comma_pseudo_with_class_prefix() {
+        let result = typecheck("Frame { > TextButton ::UIPadding, > TextLabel ::UICorner {} }").await;
+        assert_eq!(result.selectors.len(), 2);
+        assert_eq!(result.selectors[1].2, vec!["UIPadding", "UICorner"]);
+        assert!(result.errors.is_empty());
+    }
 }
