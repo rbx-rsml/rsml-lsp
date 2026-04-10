@@ -354,11 +354,13 @@ impl<'a> TypecheckSelectors<'a> {
             Token::PseudoSelector(class) => {
                 let validated_class = self.validate_instance_class(class, &part.token, "Pseudo");
                 self.classes.insert(validated_class.to_string());
+                self.consume_past_comma();
             }
 
             Token::StateSelectorOrEnumPart(Some(state)) => {
                 self.classes.extend(self.parent_classes.iter().cloned());
                 self.validate_state(state, &part.token);
+                self.consume_past_comma();
             }
 
             Token::TagSelectorOrEnumPart(_) | Token::NameSelector(_) | Token::QuerySelector(_) => {
