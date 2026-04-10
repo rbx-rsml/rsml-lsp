@@ -34,12 +34,16 @@ impl<'a> Typechecker<'a> {
         let Some(body) = body.as_ref() else { return };
 
         let body_start = body.left.token.start();
-        let body_end = body.right.as_ref()
+        let body_end = body
+            .right
+            .as_ref()
             .map(|r| r.token.end())
             .unwrap_or(body.left.token.end());
         document.definitions.insert(
             body_start..=body_end,
-            DefinitionKind::Scope { type_definition: current_classes.clone() },
+            DefinitionKind::Scope {
+                type_definition: current_classes.clone(),
+            },
         );
 
         let Some(content) = body.content.as_ref() else {
@@ -52,12 +56,20 @@ impl<'a> Typechecker<'a> {
                     self.typecheck_rule((selectors, body), &current_classes, ast_errors, document)
                 }
 
-                Construct::Assignment { left, middle, right, terminator } => {
-                    let Token::Identifier(property_name) = left.token.value() else { continue };
+                Construct::Assignment {
+                    left,
+                    middle,
+                    right,
+                    terminator,
+                } => {
+                    let Token::Identifier(property_name) = left.token.value() else {
+                        continue;
+                    };
                     let Some(middle) = middle else { continue };
 
                     let assign_start = middle.token.start();
-                    let assign_end = terminator.as_ref()
+                    let assign_end = terminator
+                        .as_ref()
                         .map(|t| t.token.end())
                         .or_else(|| right.as_ref().map(|r| r.span().1))
                         .unwrap_or(middle.token.end());
@@ -72,9 +84,14 @@ impl<'a> Typechecker<'a> {
 
                     let Some(right) = right else { continue };
                     match right.as_ref() {
-                        Construct::Enum { keyword, name, variant } => {
+                        Construct::Enum {
+                            keyword,
+                            name,
+                            variant,
+                        } => {
                             let name_range_start = keyword.token.end();
-                            let name_range_end = name.as_ref()
+                            let name_range_end = name
+                                .as_ref()
                                 .map(|node| node.token.end())
                                 .unwrap_or(assign_end);
 
@@ -91,7 +108,8 @@ impl<'a> Typechecker<'a> {
                                 };
 
                                 let variant_range_start = name_node.token.end();
-                                let variant_range_end = variant.as_ref()
+                                let variant_range_end = variant
+                                    .as_ref()
                                     .map(|node| node.token.end())
                                     .unwrap_or(assign_end);
 
@@ -146,7 +164,8 @@ static ALLOWED_PSEUDO_SELECTORS: phf::Set<&str> = phf_set! {
     "UISizeConstraint",
     "UITextSizeConstraint",
     "UIScale",
-    "UIFlexItem"
+    "UIFlexItem",
+    "StyleQuery"
 };
 
 static ALLOWED_STATE_SELECTORS: phf::Set<&str> = phf_set! {
@@ -240,14 +259,16 @@ impl<'a> TypecheckSelectors<'a> {
                 ) {
                     ConsumeResult::Some(part) => match part.token.value() {
                         Token::PseudoSelector(class) => {
-                            let validated_class = self.validate_instance_class(class, &part.token, "Pseudo");
+                            let validated_class =
+                                self.validate_instance_class(class, &part.token, "Pseudo");
                             self.classes.insert(validated_class.to_string());
+                            self.consume_past_comma();
                         }
 
                         Token::StateSelectorOrEnumPart(Some(class)) => {
                             self.classes.insert(validated_class.to_string());
-
                             self.validate_state(class, &part.token);
+                            self.consume_past_comma();
                         }
 
                         _ => (),
@@ -307,12 +328,15 @@ impl<'a> TypecheckSelectors<'a> {
                     ConsumeResult::Some(part) => match part.token.value() {
                         Token::PseudoSelector(class) => {
                             self.classes.pop();
-                            let validated_class = self.validate_instance_class(class, &part.token, "Pseudo");
+                            let validated_class =
+                                self.validate_instance_class(class, &part.token, "Pseudo");
                             self.classes.insert(validated_class.to_string());
+                            self.consume_past_comma();
                         }
 
                         Token::StateSelectorOrEnumPart(Some(state)) => {
                             self.validate_state(state, &part.token);
+                            self.consume_past_comma();
                         }
 
                         _ => (),
@@ -419,7 +443,9 @@ impl<'a> TypecheckSelectors<'a> {
                 "{origin_name} Selectors can't be defined after another {origin_name} Selector without a children (>) or descendants selector."
             )
         } else {
-            format!("{origin_name} Selectors can't be defined after a {subject_name} Selector without a children (>) or descendants selector.")
+            format!(
+                "{origin_name} Selectors can't be defined after a {subject_name} Selector without a children (>) or descendants selector."
+            )
         };
 
         self.ast_errors.push(
@@ -443,7 +469,9 @@ impl<'a> TypecheckSelectors<'a> {
 
     /// Returns the class if it valid, if its invalid then it returns `"Instance"`.
     fn validate_class<'b>(&mut self, class: &'a str, token: &SpannedToken) -> &'a str {
-        if rbx_reflection_database::get().classes.contains_key(class) {
+        if let Ok(db) = rbx_reflection_database::get()
+            && db.classes.contains_key(class)
+        {
             return class;
         }
 
@@ -457,7 +485,12 @@ impl<'a> TypecheckSelectors<'a> {
         "Instance"
     }
 
-    fn validate_instance_class(&mut self, class: &'a str, token: &SpannedToken, selector_kind: &str) -> &'a str {
+    fn validate_instance_class(
+        &mut self,
+        class: &'a str,
+        token: &SpannedToken,
+        selector_kind: &str,
+    ) -> &'a str {
         let validated = self.validate_class(class, token);
 
         if validated != "Instance" && !ALLOWED_PSEUDO_SELECTORS.contains(class) {

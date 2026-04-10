@@ -790,7 +790,7 @@ impl LanguageServer for Backend {
 
 
 fn get_enum_name_completions() -> Vec<CompletionItem> {
-    let db = rbx_reflection_database::get();
+    let Ok(db) = rbx_reflection_database::get() else { return vec![] };
     db.enums
         .keys()
         .map(|name| CompletionItem {
@@ -802,7 +802,7 @@ fn get_enum_name_completions() -> Vec<CompletionItem> {
 }
 
 fn get_enum_variant_completions(enum_name: &str) -> Vec<CompletionItem> {
-    let db = rbx_reflection_database::get();
+    let Ok(db) = rbx_reflection_database::get() else { return vec![] };
     let Some(enum_desc) = db.enums.get(enum_name) else {
         return vec![];
     };
@@ -831,7 +831,7 @@ fn get_enum_shorthand_completions(
         return get_enum_variant_completions(enum_name);
     }
 
-    let db = rbx_reflection_database::get();
+    let Ok(db) = rbx_reflection_database::get() else { return vec![] };
     for class_name in class_names {
         let Some(class_desc) = db.classes.get(class_name.as_str()) else { continue };
         for ancestor in db.superclasses_iter(class_desc) {
@@ -848,7 +848,7 @@ fn get_property_completions(class_names: &[String]) -> Vec<CompletionItem> {
     use rbx_reflection::PropertyKind;
     use std::collections::HashMap;
 
-    let db = rbx_reflection_database::get();
+    let Ok(db) = rbx_reflection_database::get() else { return vec![] };
 
     let mut class_property_sets: Vec<HashMap<&str, &rbx_reflection::PropertyDescriptor>> =
         Vec::new();

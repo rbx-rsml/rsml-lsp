@@ -647,4 +647,30 @@ mod tests {
         assert_eq!(result.selectors[0].2, vec!["UIPadding"]);
         assert!(result.errors.is_empty());
     }
+
+    // ── Comma after state/pseudo selectors ────────────────────────
+
+    #[tokio::test]
+    async fn comma_after_state_selector_continues() {
+        let result = typecheck("Frame :hover, TextButton :hover {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["Frame", "TextButton"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn comma_after_pseudo_selector_continues() {
+        let result = typecheck("Frame ::UIPadding, TextButton ::UICorner {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["UIPadding", "UICorner"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn nested_comma_after_state_selector_continues() {
+        let result = typecheck("Frame { > TextButton :hover, > TextLabel :press {} }").await;
+        assert_eq!(result.selectors.len(), 2);
+        assert_eq!(result.selectors[1].2, vec!["TextButton", "TextLabel"]);
+        assert!(result.errors.is_empty());
+    }
 }
