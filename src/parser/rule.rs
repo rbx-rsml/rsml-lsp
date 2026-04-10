@@ -219,6 +219,8 @@ impl<'a> Parser<'a> {
                 node = parser.parse_priority(node).handle_construct(&mut body_content)?;
                 node = parser.parse_name(node).handle_construct(&mut body_content)?;
 
+                node = parser.parse_tween(node).handle_construct(&mut body_content)?;
+
                 node = parser.parse_static_token_assignment(node).handle_construct(&mut body_content)?;
 
                 node = parser.parse_token_assignment(node).handle_construct(&mut body_content)?;

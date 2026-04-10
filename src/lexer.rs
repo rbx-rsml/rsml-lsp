@@ -48,7 +48,7 @@ impl<'a> Iterator for Lexer<'a> {
     }
 }
 
-pub static DECLARATION_NAMES: [&str; 4] = ["@derive", "@macro", "@priority", "@name"];
+pub static DECLARATION_NAMES: [&str; 5] = ["@derive", "@macro", "@priority", "@name", "@tween"];
 
 #[derive(Debug, Clone)]
 pub struct SpannedToken<'a>(pub usize, pub Token<'a>, pub usize);
@@ -114,6 +114,9 @@ pub enum Token<'a> {
 
     #[token("@name")]
     NameDeclaration,
+
+    #[token("@tween")]
+    TweenDeclaration,
 
     #[regex(r"@(?&ident)", callback = |lex| str_to_option(&lex.slice()[1..]))]
     QuerySelector(&'a str),
@@ -340,7 +343,8 @@ pub const TOKEN_KIND_CONSTRUCT_DELIMITERS: LazyLock<HashSet<TokenKind>> = lazy_c
     TokenKind::DeriveDeclaration,
     TokenKind::MacroDeclaration,
     TokenKind::NameDeclaration,
-    TokenKind::PriorityDeclaration
+    TokenKind::PriorityDeclaration,
+    TokenKind::TweenDeclaration
 };
 
 pub const TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS: LazyLock<HashSet<TokenKind>> = lazy_collection! {
@@ -366,6 +370,7 @@ const TOKEN_KIND_STRING_MAP: LazyLock<HashMap<TokenKind, &'static str>> = lazy_c
     TokenKind::MacroDeclaration => "\"@macro\"",
     TokenKind::PriorityDeclaration => "\"@priority\"",
     TokenKind::NameDeclaration => "\"@name\"",
+    TokenKind::TweenDeclaration => "\"@tween\"",
     TokenKind::QuerySelector => "`query selector`",
     TokenKind::InvalidDeclaration => "`invalid declaration`",
     TokenKind::Identifier => "`identifer`",

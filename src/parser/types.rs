@@ -146,6 +146,13 @@ pub enum Construct<'a> {
         terminator: Option<Node<'a>>
     },
 
+    Tween {
+        declaration: Node<'a>,
+        name: Option<Node<'a>>,
+        body: Option<Box<Construct<'a>>>,
+        terminator: Option<Node<'a>>
+    },
+
     Rule {
         selectors: Option<Vec<Node<'a>>>,
         body: Option<Delimited<'a>>
@@ -196,6 +203,7 @@ impl<'a> Construct<'a> {
             Self::Derive { .. } => "Derives",
             Self::Priority { .. } => "Priorities",
             Self::Name { .. } => "Names",
+            Self::Tween { .. } => "Tweens",
             Self::Rule { .. } => "Rules",
             Self::Assignment { left, .. } => match left.token.value() {
                 Token::Identifier(_) => "Property assignments",
@@ -217,7 +225,8 @@ impl<'a> Construct<'a> {
 
             Self::Derive { declaration, .. } |
             Self::Priority { declaration, .. } |
-            Self::Name { declaration, .. } => declaration.token.start(),
+            Self::Name { declaration, .. } |
+            Self::Tween { declaration, .. } => declaration.token.start(),
 
             Self::Rule { selectors, body } => {
                 if let Some(selectors) = selectors {
@@ -262,6 +271,13 @@ impl<'a> SpanEnd for Construct<'a> {
             Self::Name { declaration, body, terminator } => {
                 if let Some(x) = terminator { return x.token.end() }
                 if let Some(x) = body { return x.end() }
+                declaration.token.end()
+            },
+
+            Self::Tween { declaration, name, body, terminator } => {
+                if let Some(x) = terminator { return x.token.end() }
+                if let Some(x) = body { return x.end() }
+                if let Some(x) = name { return x.token.end() }
                 declaration.token.end()
             },
 

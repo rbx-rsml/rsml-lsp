@@ -108,6 +108,81 @@ impl<'a> Parser<'a> {
         )
     }
 
+    pub(crate) fn parse_tween(
+        &mut self, node: Node<'a>
+    ) -> Parsed<'a> {
+        if !node_token_matches!(node, TweenDeclaration) { return Parsed (Some(node), None) }
+
+        let declaration_node = node;
+
+        let name_node = match self.advance_until(
+            token_kind_list!("tween name", [ Identifier ]),
+            &TOKEN_KIND_CONSTRUCT_DELIMITERS
+        ) {
+            Some(Ok(node)) => Some(node),
+            Some(Err(node)) => return Parsed (Some(node), Some(
+                Construct::Tween { declaration: declaration_node, name: None, body: None, terminator: None }
+            )),
+            None => return Parsed (None, Some(
+                Construct::Tween { declaration: declaration_node, name: None, body: None, terminator: None }
+            )),
+        };
+
+        let node = self.advance_without_flags();
+        self.did_advance = true;
+
+        let (node_status, body_nodes) =
+            self.parse_datatype(node, TOKEN_KIND_CONSTRUCT_DELIMITERS);
+        let body_nodes = body_nodes.map(|x| Box::new(x));
+
+        let terminator = match node_status {
+            NodeStatus::Exists => match self.advance_until(token_kind_list![ SemiColon ], &TOKEN_KIND_CONSTRUCT_DELIMITERS) {
+                Some(Ok(node)) => node,
+                Some(Err(node)) => return Parsed (Some(node), Some(
+                    Construct::Tween { declaration: declaration_node, name: name_node, body: body_nodes, terminator: None }
+                )),
+                None => return Parsed (None, Some(
+                    Construct::Tween { declaration: declaration_node, name: name_node, body: body_nodes, terminator: None }
+                )),
+            },
+
+            NodeStatus::Err(node) => {
+                if node_token_matches!(node, SemiColon) {
+                    node
+
+                } else {
+                    let construct = Construct::Tween {
+                        declaration: declaration_node, name: name_node, body: body_nodes, terminator: None
+                    };
+
+                    self.ast_errors.push(
+                        ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::SemiColon.name())) },
+                        self.range_from_span(clamp_span_to_end(construct.end()))
+                    );
+
+                    return Parsed (Some(node), Some(construct))
+                }
+            },
+
+            NodeStatus::None => {
+                let construct = Construct::Tween {
+                    declaration: declaration_node, name: name_node, body: body_nodes, terminator: None
+                };
+
+                self.ast_errors.push(
+                    ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::SemiColon.name())) },
+                    self.range_from_span(clamp_span_to_end(construct.end()))
+                );
+
+                return Parsed (None, Some(construct))
+            }
+        };
+
+        Parsed (self.advance(), Some(Construct::Tween {
+            declaration: declaration_node, name: name_node, body: body_nodes, terminator: Some(terminator)
+        }))
+    }
+
     // TODO: properly implement macros.
     pub(crate) fn parse_macro_call(
         &mut self, node: Node<'a>
@@ -397,6 +472,8 @@ impl<'a> Parser<'a> {
 
                 node = parser.parse_priority(node).handle_construct(&mut body_content)?;
                 node = parser.parse_name(node).handle_construct(&mut body_content)?;
+
+                node = parser.parse_tween(node).handle_construct(&mut body_content)?;
 
                 node = parser.parse_static_token_assignment(node).handle_construct(&mut body_content)?;
                 node = parser.parse_token_assignment(node).handle_construct(&mut body_content)?;
