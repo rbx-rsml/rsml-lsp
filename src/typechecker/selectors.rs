@@ -225,7 +225,7 @@ impl<'a> TypecheckSelectors<'a> {
 
     fn from_new(&mut self, part: &'a Node<'a>) {
         match part.token.value() {
-            Token::TagSelectorOrEnumPart(_) | Token::NameSelector(_) => {
+            Token::TagSelectorOrEnumPart(_) | Token::NameSelector(_) | Token::QuerySelector(_) => {
                 self.classes.insert("Instance".to_string());
                 self.consume_past_comma();
             }
@@ -240,7 +240,7 @@ impl<'a> TypecheckSelectors<'a> {
                 ) {
                     ConsumeResult::Some(part) => match part.token.value() {
                         Token::PseudoSelector(class) => {
-                            let validated_class = self.validate_pseudo_class(class, &part.token);
+                            let validated_class = self.validate_instance_class(class, &part.token, "Pseudo");
                             self.classes.insert(validated_class.to_string());
                         }
 
@@ -266,6 +266,18 @@ impl<'a> TypecheckSelectors<'a> {
                         self.classes.insert(validated_class.to_string());
                     }
                 }
+            }
+
+            Token::PseudoSelector(class) => {
+                let validated_class = self.validate_instance_class(class, &part.token, "Pseudo");
+                self.classes.insert(validated_class.to_string());
+                self.consume_past_comma();
+            }
+
+            Token::StateSelectorOrEnumPart(Some(state)) => {
+                self.classes.insert("Instance".to_string());
+                self.validate_state(state, &part.token);
+                self.consume_past_comma();
             }
 
             _ => (),
@@ -295,7 +307,7 @@ impl<'a> TypecheckSelectors<'a> {
                     ConsumeResult::Some(part) => match part.token.value() {
                         Token::PseudoSelector(class) => {
                             self.classes.pop();
-                            let validated_class = self.validate_pseudo_class(class, &part.token);
+                            let validated_class = self.validate_instance_class(class, &part.token, "Pseudo");
                             self.classes.insert(validated_class.to_string());
                         }
 
@@ -316,7 +328,7 @@ impl<'a> TypecheckSelectors<'a> {
             }
 
             Token::PseudoSelector(class) => {
-                let validated_class = self.validate_pseudo_class(class, &part.token);
+                let validated_class = self.validate_instance_class(class, &part.token, "Pseudo");
                 self.classes.insert(validated_class.to_string());
             }
 
@@ -325,7 +337,7 @@ impl<'a> TypecheckSelectors<'a> {
                 self.validate_state(state, &part.token);
             }
 
-            Token::TagSelectorOrEnumPart(_) | Token::NameSelector(_) => {
+            Token::TagSelectorOrEnumPart(_) | Token::NameSelector(_) | Token::QuerySelector(_) => {
                 self.classes.insert("Instance".to_string());
                 self.consume_past_comma();
             }
@@ -422,6 +434,7 @@ impl<'a> TypecheckSelectors<'a> {
             TokenKind::TagSelectorOrEnumPart => "Tag",
             TokenKind::StateSelectorOrEnumPart => "State",
             TokenKind::NameSelector => "Name",
+            TokenKind::QuerySelector => "Query",
             TokenKind::ChildrenSelector => "Children",
             TokenKind::DescendantsSelector => "Descendants",
             _ => "Unknown",
@@ -444,15 +457,15 @@ impl<'a> TypecheckSelectors<'a> {
         "Instance"
     }
 
-    fn validate_pseudo_class(&mut self, class: &'a str, token: &SpannedToken) -> &'a str {
+    fn validate_instance_class(&mut self, class: &'a str, token: &SpannedToken, selector_kind: &str) -> &'a str {
         let validated = self.validate_class(class, token);
 
         if validated != "Instance" && !ALLOWED_PSEUDO_SELECTORS.contains(class) {
             self.ast_errors.push(
                 TypeError::InvalidSelector {
                     msg: Some(&format!(
-                        "Class \"{}\" can't be used as a Pseudo instance.",
-                        class
+                        "Class \"{}\" can't be used as a {} instance.",
+                        class, selector_kind,
                     )),
                 },
                 self.range_from_span(token.span()),

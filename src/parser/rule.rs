@@ -103,7 +103,8 @@ impl<'a> Parser<'a> {
     pub(crate) fn parse_rule_scope_selector_begin(&mut self, node: Node<'a>) -> Parsed<'a> {
         let node = match node.token.value() {
             Token::NameSelector(_) | Token::TagSelectorOrEnumPart(_) |
-            Token::StateSelectorOrEnumPart(_) | Token::PseudoSelector(_) | Token::ChildrenSelector |
+            Token::StateSelectorOrEnumPart(_) | Token::PseudoSelector(_) |
+            Token::QuerySelector(_) | Token::ChildrenSelector |
             Token::DescendantsSelector => node,
 
             Token::ScopeOpen => return self.parse_rule_scope_body(node, None),
@@ -126,12 +127,12 @@ impl<'a> Parser<'a> {
         let result = if comma_allowed {
             self.advance_until(token_kind_list!("selector part or \"{\"", [
                 Identifier, NameSelector, TagSelectorOrEnumPart, StateSelectorOrEnumPart, PseudoSelector,
-                ChildrenSelector, DescendantsSelector, ScopeOpen, Comma
+                QuerySelector, ChildrenSelector, DescendantsSelector, ScopeOpen, Comma
             ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS)
         } else {
             self.advance_until(token_kind_list!("selector part or \"{\"", [
                 Identifier, NameSelector, TagSelectorOrEnumPart, StateSelectorOrEnumPart, PseudoSelector,
-                ChildrenSelector, DescendantsSelector, ScopeOpen
+                QuerySelector, ChildrenSelector, DescendantsSelector, ScopeOpen
             ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS)
         };
 

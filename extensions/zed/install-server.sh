@@ -22,6 +22,21 @@ esac
 echo "Building rsml-lsp (release)..."
 cargo build --release --manifest-path "$REPO_ROOT/Cargo.toml"
 
+echo "Building tree-sitter WASM grammar..."
+GRAMMAR_DIR="$SCRIPT_DIR/grammars/rsml"
+if command -v ~/.cargo/bin/tree-sitter &> /dev/null; then
+    TREE_SITTER=~/.cargo/bin/tree-sitter
+else
+    TREE_SITTER=tree-sitter
+fi
+
+if $TREE_SITTER build --wasm -o "$SCRIPT_DIR/grammars/rsml.wasm" "$GRAMMAR_DIR" 2>&1; then
+    echo "Built rsml.wasm"
+else
+    echo "error: failed to build rsml.wasm"
+    exit 1
+fi
+
 mkdir -p "$INSTALL_DIR"
 cp "$REPO_ROOT/target/release/rsml-lsp" "$INSTALL_DIR/$BINARY_NAME"
 chmod +x "$INSTALL_DIR/$BINARY_NAME"

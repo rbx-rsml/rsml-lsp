@@ -43,6 +43,7 @@
 (tag_selector) @tag
 (state_selector) @tag
 (pseudo_selector) @tag
+(query_selector) @tag
 
 ; References / Variables
 (token) @variable.special

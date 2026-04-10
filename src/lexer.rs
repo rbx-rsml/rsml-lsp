@@ -115,8 +115,11 @@ pub enum Token<'a> {
     #[token("@name")]
     NameDeclaration,
 
-    // A catch-all for invalid declarations.
-    #[regex(r"@(?&ident)?", callback = |lex| str_to_option(&lex.slice()[1..]))]
+    #[regex(r"@(?&ident)", callback = |lex| str_to_option(&lex.slice()[1..]))]
+    QuerySelector(&'a str),
+
+    // A catch-all for a bare @ with no identifier.
+    #[token("@", callback = |_| None::<&str>)]
     InvalidDeclaration(Option<&'a str>),
 
     #[regex(r"\$!(?&ident)?", callback = |lex| str_to_option(&lex.slice()[2..]))]
@@ -363,6 +366,7 @@ const TOKEN_KIND_STRING_MAP: LazyLock<HashMap<TokenKind, &'static str>> = lazy_c
     TokenKind::MacroDeclaration => "\"@macro\"",
     TokenKind::PriorityDeclaration => "\"@priority\"",
     TokenKind::NameDeclaration => "\"@name\"",
+    TokenKind::QuerySelector => "`query selector`",
     TokenKind::InvalidDeclaration => "`invalid declaration`",
     TokenKind::Identifier => "`identifer`",
     TokenKind::MacroArgIdentifier => "`macro argument`",

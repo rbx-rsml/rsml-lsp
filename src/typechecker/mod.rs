@@ -563,4 +563,88 @@ mod tests {
         assert_eq!(result.scopes.len(), 1);
         assert_eq!(result.scopes[0].2, vec!["UIPadding"]);
     }
+
+    // ── Top-level state selectors ────────────────────────────────
+
+    #[tokio::test]
+    async fn top_level_state_selector_resolves_to_instance() {
+        let result = typecheck(":hover {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["Instance"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn top_level_state_selector_invalid_state() {
+        let result = typecheck(":notastate {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["Instance"]);
+        assert!(result.errors.iter().any(|err| err.contains("No state named \"notastate\" exists")));
+    }
+
+    #[tokio::test]
+    async fn nested_state_selector_inherits_parent_class() {
+        let result = typecheck("Frame { :hover {} }").await;
+        assert_eq!(result.selectors.len(), 2);
+        assert_eq!(result.selectors[0].2, vec!["Frame"]);
+        assert_eq!(result.selectors[1].2, vec!["Frame"]);
+        assert!(result.errors.is_empty());
+    }
+
+    // ── Standalone pseudo selectors (::ClassName) ───────────────
+
+    #[tokio::test]
+    async fn top_level_pseudo_selector_resolves_instance_type() {
+        let result = typecheck("::UIPadding {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["UIPadding"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn top_level_pseudo_selector_scope_resolves() {
+        let result = typecheck("::UIPadding {}").await;
+        assert_eq!(result.scopes.len(), 1);
+        assert_eq!(result.scopes[0].2, vec!["UIPadding"]);
+    }
+
+    #[tokio::test]
+    async fn top_level_pseudo_selector_invalid_class() {
+        let result = typecheck("::NotARealClass {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["Instance"]);
+        assert!(result.errors.iter().any(|err| err.contains("No class named \"NotARealClass\" exists")));
+    }
+
+    #[tokio::test]
+    async fn top_level_pseudo_selector_not_allowed_class() {
+        let result = typecheck("::Frame {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["Frame"]);
+        assert!(result.errors.iter().any(|err| err.contains("can't be used as a Pseudo instance")));
+    }
+
+    #[tokio::test]
+    async fn top_level_pseudo_selectors_with_comma() {
+        let result = typecheck("::UIPadding, ::UICorner {}").await;
+        assert_eq!(result.selectors.len(), 1);
+        assert_eq!(result.selectors[0].2, vec!["UIPadding", "UICorner"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn class_with_state_selector_keeps_class_type() {
+        // State selector preserves the parent class type
+        let result = typecheck("Frame :hover {}").await;
+        assert_eq!(result.selectors[0].2, vec!["Frame"]);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn class_with_pseudo_selector_replaces_class_type() {
+        // Pseudo selector replaces the class type
+        let result = typecheck("Frame ::UIPadding {}").await;
+        assert_eq!(result.selectors[0].2, vec!["UIPadding"]);
+        assert!(result.errors.is_empty());
+    }
 }
