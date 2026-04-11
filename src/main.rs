@@ -1612,34 +1612,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tween_arg1_full_enum_has_easing_style_variant_definition() {
+    async fn tween_arg1_full_enum_has_enum_name_then_variant() {
         let source = "Frame {\n    @tween Size (.5, Enum.EasingStyle.Linear);\n}";
         let document = typecheck_and_get_definitions(source).await;
 
-        let enum_pos = source.find("Enum.EasingStyle.Linear").unwrap();
-        let entry = document.definitions.get_key_value(&enum_pos);
-        assert!(entry.is_some(), "should have EnumVariant entry at tween arg 1 (full enum)");
+        // After "Enum" keyword should be EnumName
+        let after_enum = source.find("Enum.EasingStyle").unwrap() + 4; // after "Enum"
+        let entry = document.definitions.get_key_value(&after_enum);
+        assert!(entry.is_some(), "should have EnumName after Enum keyword");
+        assert!(matches!(entry.unwrap().1, DefinitionKind::EnumName),
+            "expected EnumName after Enum keyword");
+
+        // After enum name should be EnumVariant
+        let after_name = source.find("EasingStyle.Linear").unwrap() + 11; // after "EasingStyle"
+        let entry = document.definitions.get_key_value(&after_name);
+        assert!(entry.is_some(), "should have EnumVariant after enum name");
         match entry.unwrap().1 {
             DefinitionKind::EnumVariant { enum_name } => {
                 assert_eq!(enum_name, "EasingStyle");
             }
-            other => panic!("expected EnumVariant at tween arg 1, got {:?}", std::mem::discriminant(other)),
+            other => panic!("expected EnumVariant, got {:?}", std::mem::discriminant(other)),
         }
     }
 
     #[tokio::test]
-    async fn tween_arg2_full_enum_has_easing_direction_variant_definition() {
+    async fn tween_arg2_full_enum_has_enum_name_then_variant() {
         let source = "Frame {\n    @tween Size (.5, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut);\n}";
         let document = typecheck_and_get_definitions(source).await;
 
-        let enum_pos = source.find("Enum.EasingDirection.InOut").unwrap();
-        let entry = document.definitions.get_key_value(&enum_pos);
-        assert!(entry.is_some(), "should have EnumVariant entry at tween arg 2 (full enum)");
+        // After "Enum" keyword for arg 2 should be EnumName
+        let after_enum = source.find("Enum.EasingDirection").unwrap() + 4;
+        let entry = document.definitions.get_key_value(&after_enum);
+        assert!(entry.is_some(), "should have EnumName after Enum keyword");
+        assert!(matches!(entry.unwrap().1, DefinitionKind::EnumName),
+            "expected EnumName after Enum keyword");
+
+        // After enum name should be EnumVariant
+        let after_name = source.find("EasingDirection.InOut").unwrap() + 15;
+        let entry = document.definitions.get_key_value(&after_name);
+        assert!(entry.is_some(), "should have EnumVariant after enum name");
         match entry.unwrap().1 {
             DefinitionKind::EnumVariant { enum_name } => {
                 assert_eq!(enum_name, "EasingDirection");
             }
-            other => panic!("expected EnumVariant at tween arg 2, got {:?}", std::mem::discriminant(other)),
+            other => panic!("expected EnumVariant, got {:?}", std::mem::discriminant(other)),
         }
     }
 
