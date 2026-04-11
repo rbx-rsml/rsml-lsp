@@ -46,6 +46,45 @@ fn is_enum(construct: &Construct, expected_name: &str) -> bool {
     }
 }
 
+fn get_enum_variant<'a>(construct: &'a Construct) -> Option<&'a str> {
+    match construct {
+        Construct::Enum {
+            variant:
+                Some(Node {
+                    token:
+                        SpannedToken(
+                            _,
+                            Token::StateSelectorOrEnumPart(Some(variant))
+                            | Token::TagSelectorOrEnumPart(Some(variant)),
+                            _,
+                        ),
+                    ..
+                }),
+            ..
+        } => Some(variant),
+
+        // Enum shorthand like `:InOut`
+        Construct::Node {
+            node: Node {
+                token: SpannedToken(_, Token::StateSelectorOrEnumPart(Some(variant)), _),
+                ..
+            },
+        } => Some(variant),
+
+        _ => None,
+    }
+}
+
+fn validate_enum_variant(variant: &str, enum_name: &str) -> bool {
+    let Ok(db) = rbx_reflection_database::get() else {
+        return true;
+    };
+    let Some(enum_desc) = db.enums.get(enum_name) else {
+        return true;
+    };
+    enum_desc.items.contains_key(variant)
+}
+
 fn is_comma(construct: &Construct) -> bool {
     matches!(
         construct,
@@ -97,6 +136,13 @@ impl<'a> Typechecker<'a> {
                             TypeError::InvalidTweenArg { expected: "Enum.EasingStyle" },
                             self.parsed.range_from_span(arg.span()),
                         );
+                    } else if let Some(variant) = get_enum_variant(arg) {
+                        if !validate_enum_variant(variant, "EasingStyle") {
+                            ast_errors.push(
+                                TypeError::InvalidTweenArg { expected: "a valid Enum.EasingStyle variant" },
+                                self.parsed.range_from_span(arg.span()),
+                            );
+                        }
                     }
                 }
 
@@ -107,6 +153,13 @@ impl<'a> Typechecker<'a> {
                             TypeError::InvalidTweenArg { expected: "Enum.EasingDirection" },
                             self.parsed.range_from_span(arg.span()),
                         );
+                    } else if let Some(variant) = get_enum_variant(arg) {
+                        if !validate_enum_variant(variant, "EasingDirection") {
+                            ast_errors.push(
+                                TypeError::InvalidTweenArg { expected: "a valid Enum.EasingDirection variant" },
+                                self.parsed.range_from_span(arg.span()),
+                            );
+                        }
                     }
                 }
 
