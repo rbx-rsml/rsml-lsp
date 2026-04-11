@@ -130,7 +130,41 @@ impl<'a> Typechecker<'a> {
                     body: Some(body),
                     ..
                 } => {
-                    self.typecheck_tween(body, ast_errors);
+                    // Register the full tween span first, then typecheck_tween
+                    // will override specific arg positions with EnumVariant.
+                    let span = construct.span();
+                    document.definitions.insert(
+                        span.0..=span.1,
+                        DefinitionKind::Declaration,
+                    );
+                    self.typecheck_tween(body, ast_errors, document);
+                }
+
+                // Override the parent Scope definition for declaration constructs
+                // so that property completions are not shown inside them.
+                Construct::Derive { .. }
+                | Construct::Priority { .. }
+                | Construct::Name { .. }
+                | Construct::MacroCall { .. } => {
+                    let span = construct.span();
+                    document.definitions.insert(
+                        span.0..=span.1,
+                        DefinitionKind::Declaration,
+                    );
+                }
+
+                Construct::Macro { declaration, name, args, .. } => {
+                    let span_start = declaration.token.start();
+                    let span_end = args.as_ref().map(|a| {
+                            a.right.as_ref().map(|r| r.token.end())
+                                .unwrap_or(a.left.token.end())
+                        })
+                        .or_else(|| name.as_ref().map(|n| n.token.end()))
+                        .unwrap_or(declaration.token.end());
+                    document.definitions.insert(
+                        span_start..=span_end,
+                        DefinitionKind::Declaration,
+                    );
                 }
 
                 _ => (),

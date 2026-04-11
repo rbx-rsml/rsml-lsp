@@ -598,7 +598,8 @@ impl LanguageServer for Backend {
                 | DefinitionKind::Scope { .. }
                 | DefinitionKind::Assignment { .. }
                 | DefinitionKind::EnumName
-                | DefinitionKind::EnumVariant { .. } => (),
+                | DefinitionKind::EnumVariant { .. }
+                | DefinitionKind::Declaration => (),
             }
         }
 
@@ -637,7 +638,8 @@ impl LanguageServer for Backend {
                 DefinitionKind::Scope { .. }
                 | DefinitionKind::Assignment { .. }
                 | DefinitionKind::EnumName
-                | DefinitionKind::EnumVariant { .. } => return Ok(None),
+                | DefinitionKind::EnumVariant { .. }
+                | DefinitionKind::Declaration => return Ok(None),
             };
 
             return Ok(Some(Hover {
@@ -1575,5 +1577,141 @@ mod tests {
             }
             _ => (),
         }
+    }
+
+    #[tokio::test]
+    async fn tween_arg1_has_easing_style_variant_definition() {
+        let source = "Frame {\n    @tween Size (.5, :Linear);\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let colon_pos = source.rfind(":Linear").unwrap();
+        let entry = document.definitions.get_key_value(&colon_pos);
+        assert!(entry.is_some(), "should have EnumVariant entry at tween arg 1");
+        match entry.unwrap().1 {
+            DefinitionKind::EnumVariant { enum_name } => {
+                assert_eq!(enum_name, "EasingStyle");
+            }
+            other => panic!("expected EnumVariant at tween arg 1, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn tween_arg2_has_easing_direction_variant_definition() {
+        let source = "Frame {\n    @tween Size (.5, :Linear, :InOut);\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let colon_pos = source.rfind(":InOut").unwrap();
+        let entry = document.definitions.get_key_value(&colon_pos);
+        assert!(entry.is_some(), "should have EnumVariant entry at tween arg 2");
+        match entry.unwrap().1 {
+            DefinitionKind::EnumVariant { enum_name } => {
+                assert_eq!(enum_name, "EasingDirection");
+            }
+            other => panic!("expected EnumVariant at tween arg 2, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn tween_arg1_full_enum_has_easing_style_variant_definition() {
+        let source = "Frame {\n    @tween Size (.5, Enum.EasingStyle.Linear);\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let enum_pos = source.find("Enum.EasingStyle.Linear").unwrap();
+        let entry = document.definitions.get_key_value(&enum_pos);
+        assert!(entry.is_some(), "should have EnumVariant entry at tween arg 1 (full enum)");
+        match entry.unwrap().1 {
+            DefinitionKind::EnumVariant { enum_name } => {
+                assert_eq!(enum_name, "EasingStyle");
+            }
+            other => panic!("expected EnumVariant at tween arg 1, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn tween_arg2_full_enum_has_easing_direction_variant_definition() {
+        let source = "Frame {\n    @tween Size (.5, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut);\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let enum_pos = source.find("Enum.EasingDirection.InOut").unwrap();
+        let entry = document.definitions.get_key_value(&enum_pos);
+        assert!(entry.is_some(), "should have EnumVariant entry at tween arg 2 (full enum)");
+        match entry.unwrap().1 {
+            DefinitionKind::EnumVariant { enum_name } => {
+                assert_eq!(enum_name, "EasingDirection");
+            }
+            other => panic!("expected EnumVariant at tween arg 2, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn declaration_derive_suppresses_scope_completions() {
+        let source = "Frame {\n    @derive \"./other.rsml\";\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let derive_pos = source.find("@derive").unwrap();
+        let entry = document.definitions.get_key_value(&derive_pos);
+        assert!(entry.is_some(), "should have definition at @derive position");
+        assert!(!matches!(entry.unwrap().1, DefinitionKind::Scope { .. }),
+            "declaration should override parent Scope");
+    }
+
+    #[tokio::test]
+    async fn declaration_priority_suppresses_scope_completions() {
+        let source = "Frame {\n    @priority 1;\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let priority_pos = source.find("@priority").unwrap();
+        let entry = document.definitions.get_key_value(&priority_pos);
+        assert!(entry.is_some(), "should have definition at @priority position");
+        assert!(matches!(entry.unwrap().1, DefinitionKind::Declaration),
+            "expected Declaration at @priority");
+    }
+
+    #[tokio::test]
+    async fn declaration_name_suppresses_scope_completions() {
+        let source = "Frame {\n    @name \"Test\";\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let name_pos = source.find("@name").unwrap();
+        let entry = document.definitions.get_key_value(&name_pos);
+        assert!(entry.is_some(), "should have definition at @name position");
+        assert!(matches!(entry.unwrap().1, DefinitionKind::Declaration),
+            "expected Declaration at @name");
+    }
+
+    #[tokio::test]
+    async fn declaration_tween_arg_suppresses_scope_completions() {
+        let source = "Frame {\n    @tween Size (.5, :Linear);\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let colon_pos = source.find(":Linear").unwrap();
+        let entry = document.definitions.get_key_value(&colon_pos);
+        assert!(entry.is_some(), "should have definition at tween arg position");
+        assert!(!matches!(entry.unwrap().1, DefinitionKind::Scope { .. }),
+            "tween arg should override parent Scope");
+    }
+
+    #[tokio::test]
+    async fn declaration_macro_header_suppresses_scope_completions() {
+        let source = "Frame {\n    @macro Test() {\n        Size = 10;\n    }\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let macro_pos = source.find("@macro").unwrap();
+        let entry = document.definitions.get_key_value(&macro_pos);
+        assert!(entry.is_some(), "should have definition at @macro position");
+        assert!(matches!(entry.unwrap().1, DefinitionKind::Declaration),
+            "expected Declaration at @macro header");
+    }
+
+    #[tokio::test]
+    async fn declaration_macro_body_allows_scope_completions() {
+        let source = "Frame {\n    @macro Test() {\n        Size = 10;\n    }\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let size_pos = source.find("Size").unwrap();
+        let entry = document.definitions.get_key_value(&size_pos);
+        assert!(entry.is_some(), "should have definition inside macro body");
+        assert!(!matches!(entry.unwrap().1, DefinitionKind::Declaration),
+            "macro body should not be Declaration — it needs its own completions");
     }
 }

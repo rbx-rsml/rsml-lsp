@@ -82,6 +82,7 @@ pub enum DefinitionKind {
     EnumVariant {
         enum_name: String,
     },
+    Declaration,
 }
 
 impl DefinitionKind {
@@ -139,7 +140,7 @@ impl<'a> Typechecker<'a> {
                     body: Some(body),
                     ..
                 } => {
-                    typechecker.typecheck_tween(body, &mut ast_errors);
+                    typechecker.typecheck_tween(body, &mut ast_errors, document);
                 }
 
                 Construct::Rule { selectors, body } => {

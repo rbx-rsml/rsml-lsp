@@ -1,9 +1,10 @@
 use crate::{
+    Document,
     lexer::{SpannedToken, Token},
     parser::{AstErrors, Construct, Delimited, Node},
 };
 
-use super::{PushTypeError, Typechecker, type_error::*};
+use super::{DefinitionKind, PushTypeError, Typechecker, type_error::*};
 
 fn is_number(construct: &Construct) -> bool {
     matches!(
@@ -102,6 +103,7 @@ impl<'a> Typechecker<'a> {
         &self,
         body: &Construct<'a>,
         ast_errors: &mut AstErrors,
+        document: &mut Document,
     ) {
         match body {
             // Case 1: bare number — `@tween Prop .5;`
@@ -131,6 +133,11 @@ impl<'a> Typechecker<'a> {
 
                 // Arg 1: optional, must be Enum.EasingStyle
                 if let Some(arg) = args.get(1) {
+                    let arg_span = arg.span();
+                    document.definitions.insert(
+                        arg_span.0..=arg_span.1,
+                        DefinitionKind::EnumVariant { enum_name: "EasingStyle".to_string() },
+                    );
                     if !is_enum(arg, "EasingStyle") {
                         ast_errors.push(
                             TypeError::InvalidTweenArg { expected: "Enum.EasingStyle" },
@@ -148,6 +155,11 @@ impl<'a> Typechecker<'a> {
 
                 // Arg 2: optional, must be Enum.EasingDirection
                 if let Some(arg) = args.get(2) {
+                    let arg_span = arg.span();
+                    document.definitions.insert(
+                        arg_span.0..=arg_span.1,
+                        DefinitionKind::EnumVariant { enum_name: "EasingDirection".to_string() },
+                    );
                     if !is_enum(arg, "EasingDirection") {
                         ast_errors.push(
                             TypeError::InvalidTweenArg { expected: "Enum.EasingDirection" },
