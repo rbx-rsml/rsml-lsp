@@ -15,6 +15,7 @@ use tower_lsp::lsp_types::{Diagnostic, NumberOrString, Range};
 
 mod derive;
 mod selectors;
+mod tween;
 mod type_error;
 
 pub use type_error::*;
@@ -132,6 +133,13 @@ impl<'a> Typechecker<'a> {
                             &mut derives,
                         )
                         .await;
+                }
+
+                Construct::Tween {
+                    body: Some(body),
+                    ..
+                } => {
+                    typechecker.typecheck_tween(body, &mut ast_errors);
                 }
 
                 Construct::Rule { selectors, body } => {

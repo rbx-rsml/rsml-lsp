@@ -31,6 +31,7 @@
 "@priority" @keyword
 "@name" @keyword
 "@derive" @keyword
+"@tween" @keyword
 
 ; Macro calls
 (macro_call

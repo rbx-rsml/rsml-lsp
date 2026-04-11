@@ -126,6 +126,13 @@ impl<'a> Typechecker<'a> {
                     }
                 }
 
+                Construct::Tween {
+                    body: Some(body),
+                    ..
+                } => {
+                    self.typecheck_tween(body, ast_errors);
+                }
+
                 _ => (),
             }
         }

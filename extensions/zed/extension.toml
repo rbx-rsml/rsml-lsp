@@ -8,7 +8,7 @@ repository = "https://github.com/rbx-rsml/rsml-lsp"
 
 [grammars.rsml]
 repository = "https://github.com/rbx-rsml/tree-sitter-rsml"
-commit = "fe288513789fad56753bc482fa839ea47256bc60"
+commit = "4c3e60c1fea59f7b5fc99edba12dbce3488c446c"
 
 [language_servers.rsml-lsp]
 name = "RSML LSP"

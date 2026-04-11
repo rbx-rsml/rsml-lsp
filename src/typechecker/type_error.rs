@@ -5,14 +5,16 @@ use crate::normalize_path::NormalizePath;
 
 pub enum Datatype {
     String,
-    Number
+    Number,
+    Tween
 }
 
 impl ToString for Datatype {
     fn to_string(&self) -> String {
         match self {
             Self::String => "string",
-            Self::Number => "number"
+            Self::Number => "number",
+            Self::Tween => "number or (number, EasingStyle?, EasingDirection?)"
         }.into()
     }
 }
@@ -26,6 +28,7 @@ pub enum TypeError<'a> {
     UnknownDerive { path: Option<&'a str> },
     CyclicDerive { kind: CyclicKind<'a> },
     InvalidType { expected: Option<Datatype> },
+    InvalidTweenArg { expected: &'a str },
     InvalidSelector { msg: Option<&'a str> }
 }
 
@@ -35,6 +38,7 @@ impl<'a> TypeError<'a> {
             Self::UnknownDerive { .. } |
             Self::CyclicDerive { .. } |
             Self::InvalidType { .. } |
+            Self::InvalidTweenArg { .. } |
             Self::InvalidSelector { .. } => DiagnosticSeverity::ERROR
         }
     }
@@ -64,6 +68,9 @@ impl<'a> TypeError<'a> {
                 None => String::from("Type Error (Invalid Type)")
             },
 
+            Self::InvalidTweenArg { expected } =>
+                format!("Type Error (Invalid Tween Argument): Expected `{}`.", expected),
+
             Self::InvalidSelector { msg } => match msg {
                 Some(msg) => format!("Type Error (Invalid Selector): {}", msg),
                 None => String::from("Type Error (Invalid Selector)")
@@ -82,6 +89,7 @@ impl<'a> ToString for TypeError<'a> {
             Self::UnknownDerive { .. } => "UNKNOWN_DERIVE",
             Self::CyclicDerive { .. } => "CYCLIC_DERIVE",
             Self::InvalidType { .. } => "INVALID_TYPE",
+            Self::InvalidTweenArg { .. } => "INVALID_TWEEN_ARG",
             Self::InvalidSelector { .. } => "INVALID_SELECTOR"
         })
     }
