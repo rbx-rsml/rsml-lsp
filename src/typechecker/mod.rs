@@ -83,6 +83,9 @@ pub enum DefinitionKind {
         enum_name: String,
     },
     Declaration,
+    FilteredEnumName {
+        enum_name: String,
+    },
 }
 
 impl DefinitionKind {

@@ -599,7 +599,8 @@ impl LanguageServer for Backend {
                 | DefinitionKind::Assignment { .. }
                 | DefinitionKind::EnumName
                 | DefinitionKind::EnumVariant { .. }
-                | DefinitionKind::Declaration => (),
+                | DefinitionKind::Declaration
+                | DefinitionKind::FilteredEnumName { .. } => (),
             }
         }
 
@@ -639,7 +640,8 @@ impl LanguageServer for Backend {
                 | DefinitionKind::Assignment { .. }
                 | DefinitionKind::EnumName
                 | DefinitionKind::EnumVariant { .. }
-                | DefinitionKind::Declaration => return Ok(None),
+                | DefinitionKind::Declaration
+                | DefinitionKind::FilteredEnumName { .. } => return Ok(None),
             };
 
             return Ok(Some(Hover {
@@ -682,6 +684,14 @@ impl LanguageServer for Backend {
             }
 
             DefinitionKind::EnumName => get_enum_name_completions(),
+
+            DefinitionKind::FilteredEnumName { enum_name } => {
+                vec![CompletionItem {
+                    label: enum_name.clone(),
+                    kind: Some(CompletionItemKind::ENUM),
+                    ..CompletionItem::default()
+                }]
+            }
 
             DefinitionKind::EnumVariant { enum_name } => {
                 get_enum_variant_completions(enum_name)
@@ -1612,21 +1622,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tween_arg1_full_enum_has_enum_name_then_variant() {
+    async fn tween_arg1_full_enum_name_shows_filtered_name() {
         let source = "Frame {\n    @tween Size (.5, Enum.EasingStyle.Linear);\n}";
         let document = typecheck_and_get_definitions(source).await;
 
-        // After "Enum" keyword should be EnumName
-        let after_enum = source.find("Enum.EasingStyle").unwrap() + 4; // after "Enum"
+        // After "Enum" keyword should show only "EasingStyle" (FilteredEnumName)
+        let after_enum = source.find("Enum.EasingStyle").unwrap() + 4;
         let entry = document.definitions.get_key_value(&after_enum);
-        assert!(entry.is_some(), "should have EnumName after Enum keyword");
-        assert!(matches!(entry.unwrap().1, DefinitionKind::EnumName),
-            "expected EnumName after Enum keyword");
+        assert!(entry.is_some());
+        match entry.unwrap().1 {
+            DefinitionKind::FilteredEnumName { enum_name } => {
+                assert_eq!(enum_name, "EasingStyle");
+            }
+            other => panic!("expected FilteredEnumName, got {:?}", std::mem::discriminant(other)),
+        }
 
-        // After enum name should be EnumVariant
-        let after_name = source.find("EasingStyle.Linear").unwrap() + 11; // after "EasingStyle"
+        // After "EasingStyle" should show variants
+        let after_name = source.find("EasingStyle.Linear").unwrap() + 11;
         let entry = document.definitions.get_key_value(&after_name);
-        assert!(entry.is_some(), "should have EnumVariant after enum name");
+        assert!(entry.is_some());
         match entry.unwrap().1 {
             DefinitionKind::EnumVariant { enum_name } => {
                 assert_eq!(enum_name, "EasingStyle");
@@ -1636,21 +1650,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tween_arg2_full_enum_has_enum_name_then_variant() {
+    async fn tween_arg2_full_enum_name_shows_filtered_name() {
         let source = "Frame {\n    @tween Size (.5, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut);\n}";
         let document = typecheck_and_get_definitions(source).await;
 
-        // After "Enum" keyword for arg 2 should be EnumName
+        // After "Enum" keyword should show only "EasingDirection" (FilteredEnumName)
         let after_enum = source.find("Enum.EasingDirection").unwrap() + 4;
         let entry = document.definitions.get_key_value(&after_enum);
-        assert!(entry.is_some(), "should have EnumName after Enum keyword");
-        assert!(matches!(entry.unwrap().1, DefinitionKind::EnumName),
-            "expected EnumName after Enum keyword");
+        assert!(entry.is_some());
+        match entry.unwrap().1 {
+            DefinitionKind::FilteredEnumName { enum_name } => {
+                assert_eq!(enum_name, "EasingDirection");
+            }
+            other => panic!("expected FilteredEnumName, got {:?}", std::mem::discriminant(other)),
+        }
 
-        // After enum name should be EnumVariant
+        // After "EasingDirection" should show variants
         let after_name = source.find("EasingDirection.InOut").unwrap() + 15;
         let entry = document.definitions.get_key_value(&after_name);
-        assert!(entry.is_some(), "should have EnumVariant after enum name");
+        assert!(entry.is_some());
         match entry.unwrap().1 {
             DefinitionKind::EnumVariant { enum_name } => {
                 assert_eq!(enum_name, "EasingDirection");
@@ -1729,5 +1747,93 @@ mod tests {
         assert!(entry.is_some(), "should have definition inside macro body");
         assert!(!matches!(entry.unwrap().1, DefinitionKind::Declaration),
             "macro body should not be Declaration — it needs its own completions");
+    }
+
+    // ── Tween completion behavior ─────────────────────────────────
+
+    #[tokio::test]
+    async fn tween_shorthand_colon_shows_easing_style_variants() {
+        let source = "Frame {\n    @tween Size (.5, :Linear);\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let colon_pos = source.find(":Linear").unwrap();
+        let entry = document.definitions.get_key_value(&colon_pos);
+        assert!(entry.is_some());
+        match entry.unwrap().1 {
+            DefinitionKind::EnumVariant { enum_name } => {
+                assert_eq!(enum_name, "EasingStyle");
+                let items = get_enum_variant_completions(enum_name);
+                assert!(items.iter().any(|item| item.label == "Linear"));
+            }
+            other => panic!("expected EnumVariant, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn tween_shorthand_colon_arg2_shows_easing_direction_variants() {
+        let source = "Frame {\n    @tween Size (.5, :Linear, :InOut);\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let colon_pos = source.rfind(":InOut").unwrap();
+        let entry = document.definitions.get_key_value(&colon_pos);
+        assert!(entry.is_some());
+        match entry.unwrap().1 {
+            DefinitionKind::EnumVariant { enum_name } => {
+                assert_eq!(enum_name, "EasingDirection");
+                let items = get_enum_variant_completions(enum_name);
+                assert!(items.iter().any(|item| item.label == "InOut"));
+            }
+            other => panic!("expected EnumVariant, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn tween_enum_dot_shows_only_correct_enum_name() {
+        let source = "Frame {\n    @tween Size (.5, Enum.EasingStyle.Linear);\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        // After "Enum" keyword should be FilteredEnumName with only "EasingStyle"
+        let after_enum = source.find("Enum.EasingStyle").unwrap() + 4;
+        let entry = document.definitions.get_key_value(&after_enum);
+        assert!(entry.is_some());
+        match entry.unwrap().1 {
+            DefinitionKind::FilteredEnumName { enum_name } => {
+                assert_eq!(enum_name, "EasingStyle");
+            }
+            other => panic!("expected FilteredEnumName, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn tween_enum_dot_arg2_shows_only_correct_enum_name() {
+        let source = "Frame {\n    @tween Size (.5, :Linear, Enum.EasingDirection.InOut);\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let after_enum = source.find("Enum.EasingDirection").unwrap() + 4;
+        let entry = document.definitions.get_key_value(&after_enum);
+        assert!(entry.is_some());
+        match entry.unwrap().1 {
+            DefinitionKind::FilteredEnumName { enum_name } => {
+                assert_eq!(enum_name, "EasingDirection");
+            }
+            other => panic!("expected FilteredEnumName, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn tween_enum_name_dot_shows_variants() {
+        let source = "Frame {\n    @tween Size (.5, Enum.EasingStyle.Linear);\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        // After "EasingStyle" should show variants
+        let after_name = source.find("EasingStyle.Linear").unwrap() + 11;
+        let entry = document.definitions.get_key_value(&after_name);
+        assert!(entry.is_some());
+        match entry.unwrap().1 {
+            DefinitionKind::EnumVariant { enum_name } => {
+                assert_eq!(enum_name, "EasingStyle");
+            }
+            other => panic!("expected EnumVariant, got {:?}", std::mem::discriminant(other)),
+        }
     }
 }

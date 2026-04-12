@@ -86,48 +86,60 @@ fn validate_enum_variant(variant: &str, enum_name: &str) -> bool {
     enum_desc.items.contains_key(variant)
 }
 
+/// Registers definitions for a tween enum arg so completions work correctly:
+/// - Shorthand (`:Linear`): `EnumVariant` for the full arg span
+/// - Full enum (`Enum.EasingStyle.Linear`): `FilteredEnumName` for the name
+///   portion (shows only the correct enum name), then `EnumVariant` for the
+///   variant portion (only when the name token has a value)
 fn register_enum_arg_definitions(
     arg: &Construct,
     enum_name: &str,
+    slot_end: usize,
     document: &mut Document,
 ) {
     match arg {
-        // Full enum syntax: `Enum.EasingStyle.Linear`
         Construct::Enum {
             keyword,
             name,
             variant,
         } => {
-            let arg_span = arg.span();
-
             let name_range_start = keyword.token.end();
             let name_range_end = name
                 .as_ref()
                 .map(|node| node.token.end())
-                .unwrap_or(arg_span.1);
+                .unwrap_or(slot_end);
 
             document.definitions.insert(
                 name_range_start..=name_range_end,
-                DefinitionKind::EnumName,
+                DefinitionKind::FilteredEnumName {
+                    enum_name: enum_name.to_string(),
+                },
             );
 
             if let Some(name_node) = name {
-                let variant_range_start = name_node.token.end();
-                let variant_range_end = variant
-                    .as_ref()
-                    .map(|node| node.token.end())
-                    .unwrap_or(arg_span.1);
-
-                document.definitions.insert(
-                    variant_range_start..=variant_range_end,
-                    DefinitionKind::EnumVariant {
-                        enum_name: enum_name.to_string(),
-                    },
+                let has_name = matches!(
+                    name_node.token.value(),
+                    Token::TagSelectorOrEnumPart(Some(_))
+                    | Token::StateSelectorOrEnumPart(Some(_))
                 );
+
+                if has_name {
+                    let variant_range_start = name_node.token.end();
+                    let variant_range_end = variant
+                        .as_ref()
+                        .map(|node| node.token.end())
+                        .unwrap_or(slot_end);
+
+                    document.definitions.insert(
+                        variant_range_start..=variant_range_end,
+                        DefinitionKind::EnumVariant {
+                            enum_name: enum_name.to_string(),
+                        },
+                    );
+                }
             }
         }
 
-        // Shorthand or other: register the full arg span as EnumVariant
         _ => {
             let arg_span = arg.span();
             document.definitions.insert(
@@ -185,9 +197,12 @@ impl<'a> Typechecker<'a> {
                     );
                 }
 
+                let tuple_end = body.span().1;
+
                 // Arg 1: optional, must be Enum.EasingStyle
                 if let Some(arg) = args.get(1) {
-                    register_enum_arg_definitions(arg, "EasingStyle", document);
+                    let slot_end = args.get(2).map(|a| a.span().0).unwrap_or(tuple_end);
+                    register_enum_arg_definitions(arg, "EasingStyle", slot_end, document);
                     if !is_enum(arg, "EasingStyle") {
                         ast_errors.push(
                             TypeError::InvalidTweenArg { expected: "Enum.EasingStyle" },
@@ -205,7 +220,7 @@ impl<'a> Typechecker<'a> {
 
                 // Arg 2: optional, must be Enum.EasingDirection
                 if let Some(arg) = args.get(2) {
-                    register_enum_arg_definitions(arg, "EasingDirection", document);
+                    register_enum_arg_definitions(arg, "EasingDirection", tuple_end, document);
                     if !is_enum(arg, "EasingDirection") {
                         ast_errors.push(
                             TypeError::InvalidTweenArg { expected: "Enum.EasingDirection" },
