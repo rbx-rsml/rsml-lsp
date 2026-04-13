@@ -70,7 +70,9 @@ impl<'a> Parser<'a> {
                 &mut parser.ast, &mut parser.ast_errors, &parser.lexer.rope, Some("the global scope")
             )?;
 
-            node = parser.parse_tween(node).handle_construct(&mut parser.ast)?;
+            node = parser.parse_tween(node).handle_construct_with_err(
+                &mut parser.ast, &mut parser.ast_errors, &parser.lexer.rope, Some("the global scope")
+            )?;
 
             node = parser.parse_static_token_assignment(node).handle_construct(&mut parser.ast)?;
 
