@@ -96,7 +96,7 @@ impl<'a> Parser<'a> {
         };
 
         Parsed (self.advance(), Some(Construct::Assignment {
-            left: left_node, middle: Some(middle_node), right: None, terminator: Some(terminator)
+            left: left_node, middle: Some(middle_node), right: body_nodes, terminator: Some(terminator)
         }))
     }
 

@@ -62,6 +62,9 @@ impl<'a> Typechecker<'a> {
                     right,
                     terminator,
                 } => {
+                    if let Some(right) = right {
+                        self.validate_macro_arg_refs(right, None, ast_errors);
+                    }
                     let Token::Identifier(property_name) = left.token.value() else {
                         continue;
                     };
@@ -153,7 +156,7 @@ impl<'a> Typechecker<'a> {
                     );
                 }
 
-                Construct::Macro { declaration, name, args, .. } => {
+                Construct::Macro { declaration, name, args, body } => {
                     let span_start = declaration.token.start();
                     let span_end = args.as_ref().map(|a| {
                             a.right.as_ref().map(|r| r.token.end())
@@ -165,6 +168,7 @@ impl<'a> Typechecker<'a> {
                         span_start..=span_end,
                         DefinitionKind::Declaration,
                     );
+                    self.typecheck_macro(args, body, ast_errors);
                 }
 
                 _ => (),

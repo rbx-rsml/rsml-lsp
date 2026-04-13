@@ -29,7 +29,8 @@ pub enum TypeError<'a> {
     CyclicDerive { kind: CyclicKind<'a> },
     InvalidType { expected: Option<Datatype> },
     InvalidTweenArg { expected: &'a str },
-    InvalidSelector { msg: Option<&'a str> }
+    InvalidSelector { msg: Option<&'a str> },
+    InvalidMacroArg { msg: &'a str }
 }
 
 impl<'a> TypeError<'a> {
@@ -39,7 +40,8 @@ impl<'a> TypeError<'a> {
             Self::CyclicDerive { .. } |
             Self::InvalidType { .. } |
             Self::InvalidTweenArg { .. } |
-            Self::InvalidSelector { .. } => DiagnosticSeverity::ERROR
+            Self::InvalidSelector { .. } |
+            Self::InvalidMacroArg { .. } => DiagnosticSeverity::ERROR
         }
     }
 
@@ -75,6 +77,9 @@ impl<'a> TypeError<'a> {
                 Some(msg) => format!("Type Error (Invalid Selector): {}", msg),
                 None => String::from("Type Error (Invalid Selector)")
             },
+
+            Self::InvalidMacroArg { msg } =>
+                format!("Type Error (Invalid Macro Argument): {}", msg),
         }
     }
 
@@ -90,7 +95,8 @@ impl<'a> ToString for TypeError<'a> {
             Self::CyclicDerive { .. } => "CYCLIC_DERIVE",
             Self::InvalidType { .. } => "INVALID_TYPE",
             Self::InvalidTweenArg { .. } => "INVALID_TWEEN_ARG",
-            Self::InvalidSelector { .. } => "INVALID_SELECTOR"
+            Self::InvalidSelector { .. } => "INVALID_SELECTOR",
+            Self::InvalidMacroArg { .. } => "INVALID_MACRO_ARG"
         })
     }
 }

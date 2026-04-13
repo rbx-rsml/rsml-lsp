@@ -14,6 +14,7 @@ use rangemap::RangeInclusiveMap;
 use tower_lsp::lsp_types::{Diagnostic, NumberOrString, Range};
 
 mod derive;
+mod macro_check;
 mod selectors;
 mod tween;
 mod type_error;
@@ -153,6 +154,14 @@ impl<'a> Typechecker<'a> {
                         &mut ast_errors,
                         document,
                     );
+                }
+
+                Construct::Macro { args, body, .. } => {
+                    typechecker.typecheck_macro(args, body, &mut ast_errors);
+                }
+
+                Construct::Assignment { right: Some(right), .. } => {
+                    typechecker.validate_macro_arg_refs(right, None, &mut ast_errors);
                 }
 
                 _ => (),
@@ -717,5 +726,24 @@ mod tests {
         assert_eq!(result.selectors.len(), 2);
         assert_eq!(result.selectors[1].2, vec!["UIPadding", "UICorner"]);
         assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn macro_arg_nonexistent_errors() {
+        let result = typecheck("@macro Padding (&x) { ::UIPadding { PaddingTop = &nonexistent; } }").await;
+        assert!(result.errors.iter().any(|err| err.contains("No macro argument named")));
+    }
+
+    #[tokio::test]
+    async fn macro_arg_valid_no_error() {
+        let result = typecheck("@macro Padding (&all) { ::UIPadding { PaddingTop = &all; } }").await;
+        let macro_errors: Vec<_> = result.errors.iter().filter(|err| err.contains("Macro")).collect();
+        assert!(macro_errors.is_empty(), "unexpected macro errors: {:?}", macro_errors);
+    }
+
+    #[tokio::test]
+    async fn macro_arg_outside_macro_errors() {
+        let result = typecheck("Frame { PaddingTop = &all; }").await;
+        assert!(result.errors.iter().any(|err| err.contains("No macro argument named \"all\" exists.")));
     }
 }

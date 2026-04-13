@@ -66,7 +66,7 @@ impl<'a> Parser<'a> {
                 ColorHex, ColorTailwind, ColorCss, ColorBrick,
                 RbxAsset, RbxContent,
                 EnumKeyword, StateSelectorOrEnumPart,
-                MacroCallIdentifier
+                MacroCallIdentifier, MacroArgIdentifier
             ]),
             construct_delimiters
         ) {

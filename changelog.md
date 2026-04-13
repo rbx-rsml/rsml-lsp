@@ -1,3 +1,9 @@
+# Unreleased
+- Fixed types for rule selectors.
+- Valid macro arguments (`&{ident}`) no longer throw type errors.
+- Creating a pseudo selector for `StyleQuery` no longer throws a type error.
+- Added support for query selectors `@{ident}`.
+
 # v0.2.3
 ## Fixed
 - Removed `rsml` files are now removed from the internal documents map.
