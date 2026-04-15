@@ -803,63 +803,81 @@ impl<'a> Parser<'a> {
             }))
         }
 
-        let mut selectors: Vec<SelectorNode<'a>> = vec![];
-
-        let (node, parse_ended_reason) =
-            self.parse_loop_inner(node, |parser, node| {
-                if node_token_matches!(node, ScopeClose) {
-                    return Some((node, true))
+        let node = match self.node_is_kind_else_advance_until(node, &token_kind_list!("selector part", [
+            Identifier, NameSelector, TagSelectorOrEnumPart, StateSelectorOrEnumPart, PseudoSelector,
+            QuerySelector, ChildrenSelector, DescendantsSelector, MacroCallIdentifier, ScopeClose
+        ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS) {
+            Some(Ok(node)) => node,
+            Some(Err(node)) => {
+                let has_close = node_token_matches!(node, ScopeClose);
+                let close = if has_close { Some(node) } else { None };
+                let construct = Construct::Macro {
+                    declaration: declaration_node, name: name_node, args: args_node, return_type,
+                    body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Selector(None), close })
+                };
+                if !has_close {
+                    self.ast_errors.push(
+                        ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ScopeClose.name())) },
+                        self.range_from_span(clamp_span_to_end(construct.end()))
+                    );
                 }
+                return Parsed (self.advance(), Some(construct));
+            },
+            None => {
+                let construct = Construct::Macro {
+                    declaration: declaration_node, name: name_node, args: args_node, return_type,
+                    body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Selector(None), close: None })
+                };
+                self.ast_errors.push(
+                    ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ScopeClose.name())) },
+                    self.range_from_span(clamp_span_to_end(construct.end()))
+                );
+                return Parsed (None, Some(construct));
+            },
+        };
 
-                if node_token_matches!(node, MacroCallIdentifier(_)) {
-                    let (next_node, selector_node) = parser.parse_macro_call_in_selector(node);
-                    selectors.push(selector_node);
-                    return match next_node {
-                        Some(next) => {
-                            let end_parsing = matches!(next.token.value(), Token::ScopeClose);
-                            Some((next, end_parsing))
-                        },
-                        None => None,
-                    }
-                }
-
-                selectors.push(SelectorNode::Token(node));
-
-                match parser.advance() {
-                    Some(next) => {
-                        let end_parsing = matches!(next.token.value(), Token::ScopeClose);
-                        Some((next, end_parsing))
-                    },
-                    None => None,
-                }
-            });
-
-        if matches!(parse_ended_reason, ParseEndedReason::Manual) {
-            let content = if selectors.is_empty() { None } else { Some(selectors) };
+        if node_token_matches!(node, ScopeClose) {
             return Parsed (self.advance(), Some(Construct::Macro {
                 declaration: declaration_node,
                 name: name_node,
                 args: args_node,
                 return_type,
-                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Selector(content), close: node })
+                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Selector(None), close: Some(node) })
             }))
-
-        } else {
-            let content = if selectors.is_empty() { None } else { Some(selectors) };
-            let construct = Construct::Macro {
-                declaration: declaration_node,
-                name: name_node,
-                args: args_node,
-                return_type,
-                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Selector(content), close: None })
-            };
-
-            self.ast_errors.push(
-                ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ScopeClose.name())) },
-                self.range_from_span(clamp_span_to_end(construct.end()))
-            );
-
-            Parsed (self.advance(), Some(construct))
         }
+
+        let first_token = node.token.clone();
+        let selectors = vec![SelectorNode::Token(node)];
+
+        let (terminator, selectors) = self.parse_selector_tokens(first_token, selectors, true);
+
+        let content = if selectors.is_empty() { None } else { Some(selectors) };
+
+        if let Some(close_node) = terminator {
+            if node_token_matches!(close_node, ScopeClose) {
+                return Parsed (self.advance(), Some(Construct::Macro {
+                    declaration: declaration_node,
+                    name: name_node,
+                    args: args_node,
+                    return_type,
+                    body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Selector(content), close: Some(close_node) })
+                }))
+            }
+        }
+
+        let construct = Construct::Macro {
+            declaration: declaration_node,
+            name: name_node,
+            args: args_node,
+            return_type,
+            body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Selector(content), close: None })
+        };
+
+        self.ast_errors.push(
+            ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ScopeClose.name())) },
+            self.range_from_span(clamp_span_to_end(construct.end()))
+        );
+
+        Parsed (self.advance(), Some(construct))
     }
 }

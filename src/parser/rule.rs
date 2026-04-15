@@ -157,41 +157,56 @@ impl<'a> Parser<'a> {
     /// comma as a valid token (the "delimited" path). When false, expects only
     /// selector parts and "{".
     fn parse_rule_scope_selector(
-        &mut self, last_token: SpannedToken<'a>, mut selectors: Vec<SelectorNode<'a>>,
+        &mut self, last_token: SpannedToken<'a>, selectors: Vec<SelectorNode<'a>>,
         comma_allowed: bool
     ) -> Parsed<'a> {
+        let (node, selectors) = self.parse_selector_tokens(last_token, selectors, comma_allowed);
+
+        match node {
+            Some(node) if node_token_matches!(node, ScopeOpen) => {
+                self.parse_rule_scope_body(node, Some(selectors))
+            },
+            Some(node) => Parsed (Some(node), Some(Construct::Rule { selectors: Some(selectors), body: None })),
+            None => Parsed (None, Some(Construct::Rule { selectors: Some(selectors), body: None })),
+        }
+    }
+
+    /// Collects selector tokens until a scope delimiter (`{` or `}`) is reached.
+    /// Returns the terminator node and collected selectors.
+    pub(crate) fn parse_selector_tokens(
+        &mut self,
+        last_token: SpannedToken<'a>,
+        mut selectors: Vec<SelectorNode<'a>>,
+        comma_allowed: bool,
+    ) -> (Option<Node<'a>>, Vec<SelectorNode<'a>>) {
         let result = if comma_allowed {
-            self.advance_until(token_kind_list!("selector part or \"{\"", [
+            self.advance_until(token_kind_list!("selector part", [
                 Identifier, NameSelector, TagSelectorOrEnumPart, StateSelectorOrEnumPart, PseudoSelector,
-                QuerySelector, ChildrenSelector, DescendantsSelector, MacroCallIdentifier, ScopeOpen, Comma
+                QuerySelector, ChildrenSelector, DescendantsSelector, MacroCallIdentifier, ScopeOpen, ScopeClose, Comma
             ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS)
         } else {
-            self.advance_until(token_kind_list!("selector part or \"{\"", [
+            self.advance_until(token_kind_list!("selector part", [
                 Identifier, NameSelector, TagSelectorOrEnumPart, StateSelectorOrEnumPart, PseudoSelector,
-                QuerySelector, ChildrenSelector, DescendantsSelector, MacroCallIdentifier, ScopeOpen
+                QuerySelector, ChildrenSelector, DescendantsSelector, MacroCallIdentifier, ScopeOpen, ScopeClose
             ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS)
         };
 
         let node = match result {
             Some(Ok(node)) => node,
-            Some(Err(node)) => return Parsed (Some(node), Some(Construct::Rule { selectors: Some(selectors), body: None })),
-            None => return Parsed (None, Some(Construct::Rule { selectors: Some(selectors), body: None })),
+            Some(Err(node)) => return (Some(node), selectors),
+            None => return (None, selectors),
         };
 
         self.handle_hierarchy_selector_without_part(&last_token, &node.token);
 
-        if node_token_matches!(node, ScopeOpen) {
-            // When not comma_allowed (came from non-delimited path), no trailing comma check needed.
-            if !comma_allowed {
-                if matches!(last_token.value(), Token::Comma) {
-                    self.ast_errors.push(
-                        ParseError::UnexpectedTokens { msg: None },
-                        self.range_from_span(last_token.span())
-                    );
-                }
+        if node_token_matches!(node, ScopeOpen) || node_token_matches!(node, ScopeClose) {
+            if !comma_allowed && matches!(last_token.value(), Token::Comma) {
+                self.ast_errors.push(
+                    ParseError::UnexpectedTokens { msg: None },
+                    self.range_from_span(last_token.span())
+                );
             }
-
-            return self.parse_rule_scope_body(node, Some(selectors))
+            return (Some(node), selectors);
         }
 
         if node_token_matches!(node, MacroCallIdentifier(_)) {
@@ -200,23 +215,23 @@ impl<'a> Parser<'a> {
 
             return match next_node {
                 Some(next) => {
-                    let token = next.token.clone();
-                    if node_token_matches!(next, ScopeOpen) {
-                        self.parse_rule_scope_body(next, Some(selectors))
+                    if node_token_matches!(next, ScopeOpen) || node_token_matches!(next, ScopeClose) {
+                        (Some(next), selectors)
                     } else {
+                        let token = next.token.clone();
                         selectors.push(SelectorNode::Token(next));
                         if comma_allowed {
                             match token.value() {
-                                Token::Comma => self.parse_rule_scope_selector(token, selectors, false),
-                                _ => self.parse_rule_scope_selector(token, selectors, true)
+                                Token::Comma => self.parse_selector_tokens(token, selectors, false),
+                                _ => self.parse_selector_tokens(token, selectors, true)
                             }
                         } else {
-                            self.parse_rule_scope_selector(token, selectors, true)
+                            self.parse_selector_tokens(token, selectors, true)
                         }
                     }
                 },
-                None => Parsed (None, Some(Construct::Rule { selectors: Some(selectors), body: None }))
-            }
+                None => (None, selectors)
+            };
         }
 
         let token = node.token.clone();
@@ -224,11 +239,11 @@ impl<'a> Parser<'a> {
 
         if comma_allowed {
             match token.value() {
-                Token::Comma => self.parse_rule_scope_selector(token, selectors, false),
-                _ => self.parse_rule_scope_selector(token, selectors, true)
+                Token::Comma => self.parse_selector_tokens(token, selectors, false),
+                _ => self.parse_selector_tokens(token, selectors, true)
             }
         } else {
-            self.parse_rule_scope_selector(token, selectors, true)
+            self.parse_selector_tokens(token, selectors, true)
         }
     }
 
@@ -237,7 +252,7 @@ impl<'a> Parser<'a> {
             matches!(last_token.value(), Token::DescendantsSelector | Token::ChildrenSelector) &&
             matches!(
                 token.value(),
-                Token::DescendantsSelector | Token::ChildrenSelector | Token::Comma | Token::ScopeOpen
+                Token::DescendantsSelector | Token::ChildrenSelector | Token::Comma | Token::ScopeOpen | Token::ScopeClose
             )
         ) { return }
 
