@@ -6,9 +6,13 @@ use std::{
 
 use crate::{
     Document,
+    lexer::Token,
     luaurc::Luaurc,
     parser::{AstErrors, Construct, Parser},
+    range_from_span::RangeFromSpan,
 };
+
+use macro_check::{MacroRegistry, MacroReturnContext, MacroSignature, count_macro_def_args, macro_return_context};
 
 use rangemap::RangeInclusiveMap;
 use tower_lsp::lsp_types::{Diagnostic, NumberOrString, Range};
@@ -105,6 +109,7 @@ impl DefinitionKind {
 
 pub struct Typechecker<'a> {
     pub parsed: Parser<'a>,
+    macro_registry: MacroRegistry<'a>,
 }
 
 impl<'a> Typechecker<'a> {
@@ -114,7 +119,10 @@ impl<'a> Typechecker<'a> {
         mut luaurc: Option<&mut Luaurc>,
         document: &mut Document,
     ) -> (Self, HashMap<PathBuf, RangeInclusive<usize>>) {
-        let mut typechecker: Typechecker<'a> = Self { parsed };
+        let mut typechecker: Typechecker<'a> = Self {
+            parsed,
+            macro_registry: HashMap::new(),
+        };
 
         // We need to use a different ast errors
         // vec due to borrow checker issues.
@@ -156,12 +164,48 @@ impl<'a> Typechecker<'a> {
                     );
                 }
 
-                Construct::Macro { args, body, .. } => {
+                Construct::Macro { name, args, return_type, body, .. } => {
+                    if let Some(name_node) = name {
+                        if let Token::Identifier(name_str) = name_node.token.value() {
+                            let arg_count = count_macro_def_args(args);
+                            let context = macro_return_context(return_type);
+                            let signatures = typechecker
+                                .macro_registry
+                                .entry(name_str)
+                                .or_insert_with(Vec::new);
+
+                            if signatures.iter().any(|sig| sig.arg_count == arg_count) {
+                                ast_errors.push(
+                                    TypeError::DuplicateMacro { name: name_str, arg_count },
+                                    Range::from_span(&typechecker.parsed.lexer.rope, datatype.span()),
+                                );
+                            } else {
+                                signatures.push(MacroSignature { arg_count, return_context: context });
+                            }
+                        }
+                    }
                     typechecker.typecheck_macro(args, body, &mut ast_errors);
+                }
+
+                Construct::MacroCall { name, body, .. } => {
+                    typechecker.validate_macro_call(
+                        name,
+                        body,
+                        MacroReturnContext::Construct,
+                        &mut ast_errors,
+                    );
                 }
 
                 Construct::Assignment { right: Some(right), .. } => {
                     typechecker.validate_macro_arg_refs(right, None, &mut ast_errors);
+                    if let Construct::MacroCall { name, body, .. } = right.as_ref() {
+                        typechecker.validate_macro_call(
+                            name,
+                            body,
+                            MacroReturnContext::Assignment,
+                            &mut ast_errors,
+                        );
+                    }
                 }
 
                 _ => (),
@@ -745,5 +789,179 @@ mod tests {
     async fn macro_arg_outside_macro_errors() {
         let result = typecheck("Frame { PaddingTop = &all; }").await;
         assert!(result.errors.iter().any(|err| err.contains("No macro argument named \"all\" exists.")));
+    }
+
+    // ── Macro call typechecking ───────────────────────────────────
+
+    #[tokio::test]
+    async fn macro_call_after_definition_no_error() {
+        let result = typecheck("@macro Padding () { ::UIPadding {} }\nPadding!();").await;
+        let macro_errors: Vec<_> = result.errors.iter()
+            .filter(|err| err.contains("Undefined Macro") || err.contains("Wrong Macro"))
+            .collect();
+        assert!(macro_errors.is_empty(), "unexpected macro errors: {:?}", macro_errors);
+    }
+
+    #[tokio::test]
+    async fn macro_call_before_definition_errors() {
+        let result = typecheck("Padding!();\n@macro Padding () { ::UIPadding {} }").await;
+        assert!(result.errors.iter().any(|err| err.contains("No macro named `Padding` has been defined")));
+    }
+
+    #[tokio::test]
+    async fn macro_call_undefined_errors() {
+        let result = typecheck("DoesNotExist!();").await;
+        assert!(result.errors.iter().any(|err| err.contains("No macro named `DoesNotExist` has been defined")));
+    }
+
+    #[tokio::test]
+    async fn macro_call_wrong_arg_count_errors() {
+        let result = typecheck("@macro Padding (&all) { ::UIPadding {} }\nPadding!();").await;
+        assert!(result.errors.iter().any(|err| err.contains("Wrong Macro Argument Count")));
+    }
+
+    #[tokio::test]
+    async fn macro_call_correct_arg_count_no_error() {
+        let result = typecheck("@macro Padding (&all) { ::UIPadding {} }\nPadding!(10);").await;
+        let macro_errors: Vec<_> = result.errors.iter()
+            .filter(|err| err.contains("Wrong Macro Argument Count"))
+            .collect();
+        assert!(macro_errors.is_empty(), "unexpected errors: {:?}", macro_errors);
+    }
+
+    #[tokio::test]
+    async fn macro_call_overloaded_correct_arg_count() {
+        let result = typecheck(
+            "@macro Padding (&all) { ::UIPadding {} }\n@macro Padding (&x, &y) { ::UIPadding {} }\nPadding!(1, 2);"
+        ).await;
+        let macro_errors: Vec<_> = result.errors.iter()
+            .filter(|err| err.contains("Wrong Macro Argument Count"))
+            .collect();
+        assert!(macro_errors.is_empty(), "unexpected errors: {:?}", macro_errors);
+    }
+
+    #[tokio::test]
+    async fn macro_call_overloaded_wrong_arg_count() {
+        let result = typecheck(
+            "@macro Padding (&all) { ::UIPadding {} }\n@macro Padding (&x, &y) { ::UIPadding {} }\nPadding!(1, 2, 3);"
+        ).await;
+        assert!(result.errors.iter().any(|err| err.contains("Wrong Macro Argument Count")));
+    }
+
+    #[tokio::test]
+    async fn macro_call_construct_in_assignment_context_errors() {
+        let result = typecheck(
+            "@macro Foo () { Frame {} }\nFrame { Size = Foo!(); }"
+        ).await;
+        assert!(result.errors.iter().any(|err| err.contains("Wrong Macro Context")));
+    }
+
+    #[tokio::test]
+    async fn macro_call_assignment_in_construct_context_errors() {
+        let result = typecheck(
+            "@macro Foo () -> Assignment { 10 }\nFoo!();"
+        ).await;
+        assert!(result.errors.iter().any(|err| err.contains("Wrong Macro Context")));
+    }
+
+    #[tokio::test]
+    async fn macro_call_assignment_in_assignment_context_no_error() {
+        let result = typecheck(
+            "@macro Foo () -> Assignment { 10 }\nFrame { Size = Foo!(); }"
+        ).await;
+        let macro_errors: Vec<_> = result.errors.iter()
+            .filter(|err| err.contains("Wrong Macro Context"))
+            .collect();
+        assert!(macro_errors.is_empty(), "unexpected errors: {:?}", macro_errors);
+    }
+
+    #[tokio::test]
+    async fn macro_call_selector_in_selector_context_no_error() {
+        let result = typecheck(
+            "@macro Sel () -> Selector { Frame }\nSel!() {}"
+        ).await;
+        let macro_errors: Vec<_> = result.errors.iter()
+            .filter(|err| err.contains("Wrong Macro Context") || err.contains("Undefined Macro"))
+            .collect();
+        assert!(macro_errors.is_empty(), "unexpected errors: {:?}", macro_errors);
+    }
+
+    #[tokio::test]
+    async fn macro_call_selector_in_selector_context_with_comma_no_error() {
+        let result = typecheck(
+            "@macro Sel () -> Selector { Frame }\nFrame, Sel!() {}"
+        ).await;
+        let macro_errors: Vec<_> = result.errors.iter()
+            .filter(|err| err.contains("Wrong Macro Context") || err.contains("Undefined Macro"))
+            .collect();
+        assert!(macro_errors.is_empty(), "unexpected errors: {:?}", macro_errors);
+    }
+
+    #[tokio::test]
+    async fn macro_call_construct_in_selector_context_errors() {
+        let result = typecheck(
+            "@macro Foo () { Frame {} }\nFoo!() {}"
+        ).await;
+        assert!(result.errors.iter().any(|err| err.contains("Wrong Macro Context")));
+    }
+
+    #[tokio::test]
+    async fn macro_call_in_rule_body() {
+        let result = typecheck(
+            "@macro Padding () { ::UIPadding {} }\nFrame { Padding!(); }"
+        ).await;
+        let macro_errors: Vec<_> = result.errors.iter()
+            .filter(|err| err.contains("Undefined Macro") || err.contains("Wrong Macro"))
+            .collect();
+        assert!(macro_errors.is_empty(), "unexpected errors: {:?}", macro_errors);
+    }
+
+    #[tokio::test]
+    async fn macro_call_no_return_type_defaults_to_construct() {
+        let result = typecheck(
+            "@macro Foo () { Frame {} }\nFoo!();"
+        ).await;
+        let macro_errors: Vec<_> = result.errors.iter()
+            .filter(|err| err.contains("Wrong Macro Context") || err.contains("Undefined Macro"))
+            .collect();
+        assert!(macro_errors.is_empty(), "unexpected errors: {:?}", macro_errors);
+    }
+
+    #[tokio::test]
+    async fn macro_call_inside_macro_body() {
+        let result = typecheck(
+            "@macro Inner () { ::UIPadding {} }\n@macro Outer () { Inner!(); }"
+        ).await;
+        let macro_errors: Vec<_> = result.errors.iter()
+            .filter(|err| err.contains("Undefined Macro") || err.contains("Wrong Macro"))
+            .collect();
+        assert!(macro_errors.is_empty(), "unexpected errors: {:?}", macro_errors);
+    }
+
+    #[tokio::test]
+    async fn macro_call_inside_macro_body_undefined_errors() {
+        let result = typecheck(
+            "@macro Outer () { NotDefined!(); }"
+        ).await;
+        assert!(result.errors.iter().any(|err| err.contains("No macro named `NotDefined` has been defined")));
+    }
+
+    #[tokio::test]
+    async fn macro_duplicate_same_name_same_args_errors() {
+        let result = typecheck(
+            "@macro Test () { Frame {} }\n@macro Test () -> Selector { Frame }"
+        ).await;
+        assert!(result.errors.iter().any(|err| err.contains("Duplicate Macro")));
+    }
+
+    #[tokio::test]
+    async fn macro_duplicate_same_name_different_args_no_error() {
+        let result = typecheck(
+            "@macro Test (&a) { Frame {} }\n@macro Test (&a, &b) { Frame {} }"
+        ).await;
+        let duplicate_errors: Vec<_> = result.errors.iter()
+            .filter(|err| err.contains("Duplicate Macro"))
+            .collect();
+        assert!(duplicate_errors.is_empty(), "unexpected errors: {:?}", duplicate_errors);
     }
 }

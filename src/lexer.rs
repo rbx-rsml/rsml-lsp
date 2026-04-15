@@ -350,6 +350,19 @@ pub const TOKEN_KIND_CONSTRUCT_DELIMITERS: LazyLock<HashSet<TokenKind>> = lazy_c
     TokenKind::TweenDeclaration
 };
 
+pub const TOKEN_KIND_MACRO_CALL_DELIMITERS: LazyLock<HashSet<TokenKind>> = lazy_collection! {
+    TokenKind::ParensClose,
+    TokenKind::ScopeClose,
+    TokenKind::ScopeOpen,
+    TokenKind::SemiColon,
+
+    TokenKind::DeriveDeclaration,
+    TokenKind::MacroDeclaration,
+    TokenKind::NameDeclaration,
+    TokenKind::PriorityDeclaration,
+    TokenKind::TweenDeclaration
+};
+
 pub const TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS: LazyLock<HashSet<TokenKind>> = lazy_collection! {
     TokenKind::ParensClose,
 };

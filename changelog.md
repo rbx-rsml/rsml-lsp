@@ -2,6 +2,8 @@
 ## Changes
 - Added support for query selectors `@{ident}`.
 - Macro's can now have a return context specified (`@macro Test -> Context {}`). Supported context's are `Construct`, `Selector` and `Assignment`.
+- Added an error for when calling a macro which doesn't exist.
+- Added an error for when a macro overload is invalid.
 
 ## Fixes
 - Fixed types for rule selectors.

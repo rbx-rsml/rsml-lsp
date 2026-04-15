@@ -1,5 +1,5 @@
 use crate::{node_token_matches, token_kind_list};
-use crate::lexer::{SpannedToken, Token, TokenKind, TOKEN_KIND_CONSTRUCT_DELIMITERS, TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS};
+use crate::lexer::{SpannedToken, Token, TokenKind, TOKEN_KIND_CONSTRUCT_DELIMITERS, TOKEN_KIND_INSIDE_PARENS_CONSTRUCT_DELIMITERS, TOKEN_KIND_MACRO_CALL_DELIMITERS};
 use crate::list::{Stringified, TokenKindList};
 use crate::parser::parse_error::{ParseError, ParseErrorMessage};
 use crate::parser::types::*;
@@ -199,7 +199,18 @@ impl<'a> Parser<'a> {
     ) -> Parsed<'a> {
         if !node_token_matches!(node, MacroCallIdentifier(_)) { return Parsed (Some(node), None) }
 
-        self.parse_macro_call_body(node)
+        let Parsed(next_node, construct) = self.parse_macro_call_body(node);
+
+        // If a `{` follows the macro call, parse it as a Rule with the macro call as a selector.
+        if let Some(ref scope_open) = next_node
+            && node_token_matches!(scope_open, ScopeOpen)
+            && let Some(Construct::MacroCall { name, body, .. }) = construct
+        {
+            let selector_node = SelectorNode::MacroCall { name, body };
+            return self.parse_rule_scope_body(next_node.unwrap(), Some(vec![selector_node]));
+        }
+
+        Parsed(next_node, construct)
     }
 
     pub(crate) fn parse_macro_call_body(&mut self, name_node: Node<'a>) -> Parsed<'a> {
@@ -246,7 +257,7 @@ impl<'a> Parser<'a> {
             }
         };
 
-        let terminator_node = match self.advance_until(token_kind_list![SemiColon], &TOKEN_KIND_CONSTRUCT_DELIMITERS) {
+        let terminator_node = match self.advance_until(token_kind_list![SemiColon], &TOKEN_KIND_MACRO_CALL_DELIMITERS) {
             Some(Ok(node)) => node,
             Some(Err(node)) => return Parsed (Some(node), Some(Construct::MacroCall {
                 name: name_node,

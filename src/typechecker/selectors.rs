@@ -16,6 +16,7 @@ use ropey::Rope;
 use tower_lsp::lsp_types::Range;
 
 use super::{DefinitionKind, PushTypeError, Typechecker, type_error::*};
+use super::macro_check::{MacroRegistry, MacroReturnContext};
 
 impl<'a> Typechecker<'a> {
     pub(super) fn typecheck_rule(
@@ -64,6 +65,9 @@ impl<'a> Typechecker<'a> {
                 } => {
                     if let Some(right) = right {
                         self.validate_macro_arg_refs(right, None, ast_errors);
+                        if let Construct::MacroCall { name, body, .. } = right.as_ref() {
+                            self.validate_macro_call(name, body, MacroReturnContext::Assignment, ast_errors);
+                        }
                     }
                     let Token::Identifier(property_name) = left.token.value() else {
                         continue;
@@ -147,13 +151,21 @@ impl<'a> Typechecker<'a> {
                 // so that property completions are not shown inside them.
                 Construct::Derive { .. }
                 | Construct::Priority { .. }
-                | Construct::Name { .. }
-                | Construct::MacroCall { .. } => {
+                | Construct::Name { .. } => {
                     let span = construct.span();
                     document.definitions.insert(
                         span.0..=span.1,
                         DefinitionKind::Declaration,
                     );
+                }
+
+                Construct::MacroCall { name, body, .. } => {
+                    let span = construct.span();
+                    document.definitions.insert(
+                        span.0..=span.1,
+                        DefinitionKind::Declaration,
+                    );
+                    self.validate_macro_call(name, body, MacroReturnContext::Construct, ast_errors);
                 }
 
                 Construct::Macro { declaration, name, args, return_type, body } => {
@@ -192,6 +204,7 @@ impl<'a> Typechecker<'a> {
             &self.parsed.lexer.rope,
             ast_errors,
             document,
+            &self.macro_registry,
         )
         .classes
         .into_iter()
@@ -234,6 +247,7 @@ struct TypecheckSelectors<'a> {
 
     rope: &'a Rope,
     ast_errors: &'a mut AstErrors,
+    macro_registry: &'a MacroRegistry<'a>,
 }
 
 impl<'a> TypecheckSelectors<'a> {
@@ -243,6 +257,7 @@ impl<'a> TypecheckSelectors<'a> {
         rope: &'a Rope,
         ast_errors: &'a mut AstErrors,
         document: &mut Document,
+        macro_registry: &'a MacroRegistry<'a>,
     ) -> Self {
         let mut typecheck_selectors = Self {
             iter: selectors.iter(),
@@ -252,6 +267,7 @@ impl<'a> TypecheckSelectors<'a> {
             has_name: false,
             rope,
             ast_errors,
+            macro_registry,
         };
 
         typecheck_selectors.begin(document);
@@ -267,7 +283,10 @@ impl<'a> TypecheckSelectors<'a> {
                     self.part = Some(node);
                     return Some(node);
                 }
-                SelectorNode::MacroCall { .. } => continue,
+                SelectorNode::MacroCall { name, body } => {
+                    self.validate_selector_macro_call(name, body);
+                    continue;
+                }
             }
         }
     }
@@ -578,6 +597,61 @@ impl<'a> TypecheckSelectors<'a> {
         );
 
         false
+    }
+
+    fn validate_selector_macro_call(
+        &mut self,
+        name: &Node<'a>,
+        body: &Option<Delimited<'a>>,
+    ) {
+        use super::macro_check::count_macro_call_args;
+
+        let Token::MacroCallIdentifier(Some(macro_name)) = name.token.value() else {
+            return;
+        };
+
+        let Some(signatures) = self.macro_registry.get(macro_name) else {
+            self.ast_errors.push(
+                TypeError::UndefinedMacro { name: macro_name },
+                self.range_from_span(name.token.span()),
+            );
+            return;
+        };
+
+        let call_arg_count = count_macro_call_args(body);
+
+        let matching: Vec<_> = signatures
+            .iter()
+            .filter(|signature| signature.arg_count == call_arg_count)
+            .collect();
+
+        if matching.is_empty() {
+            let expected_counts: Vec<usize> =
+                signatures.iter().map(|signature| signature.arg_count).collect();
+            self.ast_errors.push(
+                TypeError::WrongMacroArgCount {
+                    name: macro_name,
+                    expected: expected_counts,
+                    got: call_arg_count,
+                },
+                self.range_from_span(name.token.span()),
+            );
+            return;
+        }
+
+        let context_match = matching
+            .iter()
+            .any(|signature| signature.return_context == MacroReturnContext::Selector);
+        if !context_match {
+            self.ast_errors.push(
+                TypeError::WrongMacroContext {
+                    name: macro_name,
+                    expected: matching[0].return_context.name(),
+                    got: MacroReturnContext::Selector.name(),
+                },
+                self.range_from_span(name.token.span()),
+            );
+        }
     }
 
     fn range_from_span(&self, span: (usize, usize)) -> Range {

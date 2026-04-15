@@ -30,7 +30,11 @@ pub enum TypeError<'a> {
     InvalidType { expected: Option<Datatype> },
     InvalidTweenArg { expected: &'a str },
     InvalidSelector { msg: Option<&'a str> },
-    InvalidMacroArg { msg: &'a str }
+    InvalidMacroArg { msg: &'a str },
+    UndefinedMacro { name: &'a str },
+    WrongMacroArgCount { name: &'a str, expected: Vec<usize>, got: usize },
+    WrongMacroContext { name: &'a str, expected: &'a str, got: &'a str },
+    DuplicateMacro { name: &'a str, arg_count: usize },
 }
 
 impl<'a> TypeError<'a> {
@@ -41,7 +45,11 @@ impl<'a> TypeError<'a> {
             Self::InvalidType { .. } |
             Self::InvalidTweenArg { .. } |
             Self::InvalidSelector { .. } |
-            Self::InvalidMacroArg { .. } => DiagnosticSeverity::ERROR
+            Self::InvalidMacroArg { .. } |
+            Self::UndefinedMacro { .. } |
+            Self::WrongMacroArgCount { .. } |
+            Self::WrongMacroContext { .. } |
+            Self::DuplicateMacro { .. } => DiagnosticSeverity::ERROR
         }
     }
 
@@ -80,6 +88,38 @@ impl<'a> TypeError<'a> {
 
             Self::InvalidMacroArg { msg } =>
                 format!("Type Error (Invalid Macro Argument): {}", msg),
+
+            Self::UndefinedMacro { name } =>
+                format!("Type Error (Undefined Macro): No macro named `{}` has been defined.", name),
+
+            Self::WrongMacroArgCount { name, expected, got } => {
+                let expected_str = match expected.len() {
+                    0 => String::from("no arguments"),
+                    1 => format!("{} argument{}", expected[0], if expected[0] == 1 { "" } else { "s" }),
+                    _ => {
+                        let mut sorted = expected.clone();
+                        sorted.sort();
+                        let parts: Vec<String> = sorted.iter().map(|n| n.to_string()).collect();
+                        format!("{} arguments", parts.join(" or "))
+                    }
+                };
+                format!(
+                    "Type Error (Wrong Macro Argument Count): Macro `{}` expects {}, but {} {} provided.",
+                    name, expected_str, got, if *got == 1 { "was" } else { "were" }
+                )
+            }
+
+            Self::WrongMacroContext { name, expected, got } =>
+                format!(
+                    "Type Error (Wrong Macro Context): Macro `{}` returns {}, but is used in a {} context.",
+                    name, expected, got
+                ),
+
+            Self::DuplicateMacro { name, arg_count } =>
+                format!(
+                    "Type Error (Duplicate Macro): Macro `{}` with {} argument{} has already been defined.",
+                    name, arg_count, if *arg_count == 1 { "" } else { "s" }
+                ),
         }
     }
 
@@ -96,7 +136,11 @@ impl<'a> ToString for TypeError<'a> {
             Self::InvalidType { .. } => "INVALID_TYPE",
             Self::InvalidTweenArg { .. } => "INVALID_TWEEN_ARG",
             Self::InvalidSelector { .. } => "INVALID_SELECTOR",
-            Self::InvalidMacroArg { .. } => "INVALID_MACRO_ARG"
+            Self::InvalidMacroArg { .. } => "INVALID_MACRO_ARG",
+            Self::UndefinedMacro { .. } => "UNDEFINED_MACRO",
+            Self::WrongMacroArgCount { .. } => "WRONG_MACRO_ARG_COUNT",
+            Self::WrongMacroContext { .. } => "WRONG_MACRO_CONTEXT",
+            Self::DuplicateMacro { .. } => "DUPLICATE_MACRO",
         })
     }
 }
