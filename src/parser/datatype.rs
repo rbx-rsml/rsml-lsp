@@ -63,7 +63,7 @@ impl<'a> Parser<'a> {
                 Number, NumberScale, NumberOffset,
                 Boolean, Nil,
                 StaticTokenIdentifier, TokenIdentifier,
-                ColorHex, ColorTailwind, ColorCss, ColorBrick,
+                ColorHex, ColorTailwind, ColorCss, ColorBrick, ColorSkin,
                 RbxAsset, RbxContent,
                 EnumKeyword, StateSelectorOrEnumPart,
                 MacroCallIdentifier, MacroArgIdentifier

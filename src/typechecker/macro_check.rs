@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::{
     lexer::Token,
-    parser::{AstErrors, Construct, Delimited},
+    parser::{AstErrors, Construct, Delimited, MacroBody, MacroBodyContent},
     range_from_span::RangeFromSpan,
 };
 
@@ -12,14 +12,22 @@ impl<'a> Typechecker<'a> {
     pub(super) fn typecheck_macro(
         &self,
         args: &Option<Delimited<'a>>,
-        body: &Option<Delimited<'a>>,
+        body: &Option<MacroBody<'a>>,
         ast_errors: &mut AstErrors,
     ) {
         let macro_args = collect_macro_arg_names(args);
         let Some(body) = body else { return };
-        let Some(content) = &body.content else { return };
 
-        self.typecheck_macro_body_content(content, &macro_args, ast_errors);
+        match &body.content {
+            MacroBodyContent::Construct(Some(content)) => {
+                self.typecheck_macro_body_content(content, &macro_args, ast_errors);
+            }
+            MacroBodyContent::Assignment(Some(content)) => {
+                self.validate_macro_arg_refs(content, Some(&macro_args), ast_errors);
+            }
+            MacroBodyContent::Selector(_) => {}
+            _ => {}
+        }
     }
 
     fn typecheck_macro_body_content(

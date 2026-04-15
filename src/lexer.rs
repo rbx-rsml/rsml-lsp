@@ -161,6 +161,9 @@ pub enum Token<'a> {
     #[regex(r"::(?&ident)", callback = |lex| str_to_option(&lex.slice()[2..]))]
     PseudoSelector(&'a str),
 
+    #[token("->")]
+    ReturnArrow,
+
     #[token(">")]
     ChildrenSelector,
 
@@ -383,6 +386,7 @@ const TOKEN_KIND_STRING_MAP: LazyLock<HashMap<TokenKind, &'static str>> = lazy_c
     TokenKind::TagSelectorOrEnumPart => "`tag selector`",
     TokenKind::StateSelectorOrEnumPart => "`state selector`",
     TokenKind::PseudoSelector => "`pseudo selector`",
+    TokenKind::ReturnArrow => "\"->\"",
     TokenKind::ChildrenSelector => "\">\"",
     TokenKind::DescendantsSelector => "\">>\"",
     TokenKind::ScopeOpen => "\"{\"",

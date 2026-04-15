@@ -1,11 +1,15 @@
 # Unreleased
+## Changes
+- Added support for query selectors `@{ident}`.
+
+## Fixes
 - Fixed types for rule selectors.
 - Valid macro arguments (`&{ident}`) no longer throw type errors.
 - Creating a pseudo selector for `StyleQuery` no longer throws a type error.
-- Added support for query selectors `@{ident}`.
+- Skin color codes no longer throw errors when used in property assignment.
 
 # v0.2.3
-## Fixed
+## Fixes
 - Removed `rsml` files are now removed from the internal documents map.
 - Removed/added workspaces are now removed/added from the internal workspaces map.
 

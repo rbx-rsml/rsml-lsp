@@ -6,7 +6,7 @@ use crate::{
     Document,
     lexer::{SpannedToken, Token, TokenKind},
     list::TokenKindList,
-    parser::{AstErrors, Construct, Delimited, Node},
+    parser::{AstErrors, Construct, Delimited, Node, SelectorNode},
     range_from_span::RangeFromSpan,
     token_kind_list,
 };
@@ -20,7 +20,7 @@ use super::{DefinitionKind, PushTypeError, Typechecker, type_error::*};
 impl<'a> Typechecker<'a> {
     pub(super) fn typecheck_rule(
         &self,
-        (selectors, body): (&Option<Vec<Node<'a>>>, &Option<Delimited<'a>>),
+        (selectors, body): (&Option<Vec<SelectorNode<'a>>>, &Option<Delimited<'a>>),
         parent_classes: &Vec<String>,
         ast_errors: &mut AstErrors,
         document: &mut Document,
@@ -156,12 +156,15 @@ impl<'a> Typechecker<'a> {
                     );
                 }
 
-                Construct::Macro { declaration, name, args, body } => {
+                Construct::Macro { declaration, name, args, return_type, body } => {
                     let span_start = declaration.token.start();
-                    let span_end = args.as_ref().map(|a| {
+                    let span_end = return_type.as_ref().map(|(arrow, ident)| {
+                            ident.as_ref().map(|i| i.token.end()).unwrap_or(arrow.token.end())
+                        })
+                        .or_else(|| args.as_ref().map(|a| {
                             a.right.as_ref().map(|r| r.token.end())
                                 .unwrap_or(a.left.token.end())
-                        })
+                        }))
                         .or_else(|| name.as_ref().map(|n| n.token.end()))
                         .unwrap_or(declaration.token.end());
                     document.definitions.insert(
@@ -178,7 +181,7 @@ impl<'a> Typechecker<'a> {
 
     fn typecheck_selectors(
         &self,
-        selectors: &Vec<Node<'a>>,
+        selectors: &Vec<SelectorNode<'a>>,
         parent_classes: &Vec<String>,
         ast_errors: &mut AstErrors,
         document: &mut Document,
@@ -222,7 +225,7 @@ static ALLOWED_STATE_SELECTORS: phf::Set<&str> = phf_set! {
 };
 
 struct TypecheckSelectors<'a> {
-    iter: Iter<'a, Node<'a>>,
+    iter: Iter<'a, SelectorNode<'a>>,
     parent_classes: &'a Vec<String>,
     classes: IndexSet<String>,
 
@@ -235,7 +238,7 @@ struct TypecheckSelectors<'a> {
 
 impl<'a> TypecheckSelectors<'a> {
     fn new(
-        selectors: &'a Vec<Node<'a>>,
+        selectors: &'a Vec<SelectorNode<'a>>,
         parent_classes: &'a Vec<String>,
         rope: &'a Rope,
         ast_errors: &'a mut AstErrors,
@@ -257,9 +260,16 @@ impl<'a> TypecheckSelectors<'a> {
     }
 
     fn next(&mut self) -> Option<&'a Node<'a>> {
-        let next_part = self.iter.next()?;
-        self.part = Some(next_part);
-        Some(next_part)
+        loop {
+            let next_item = self.iter.next()?;
+            match next_item {
+                SelectorNode::Token(node) => {
+                    self.part = Some(node);
+                    return Some(node);
+                }
+                SelectorNode::MacroCall { .. } => continue,
+            }
+        }
     }
 
     fn begin_iteration(&mut self, part: &'a Node<'a>) {

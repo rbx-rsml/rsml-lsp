@@ -14,7 +14,8 @@ impl<'a> Parser<'a> {
                 "property assignment, selector part or rule body", [
                     Equals, ScopeOpen, Identifier, NameSelector,
                     TagSelectorOrEnumPart, StateSelectorOrEnumPart,
-                    PseudoSelector, Comma, ChildrenSelector, DescendantsSelector
+                    PseudoSelector, Comma, ChildrenSelector, DescendantsSelector,
+                    MacroCallIdentifier
                 ]
             ),
             &TOKEN_KIND_CONSTRUCT_DELIMITERS
@@ -29,16 +30,34 @@ impl<'a> Parser<'a> {
         // We switch to parsing a selector if the token is not an equals sign.
         if !matches!(middle_token_value, Token::Equals) {
             return match middle_token_value {
-                Token::ScopeOpen => self.parse_rule_scope_body(middle_node, Some(vec![node])),
+                Token::ScopeOpen => self.parse_rule_scope_body(middle_node, Some(vec![SelectorNode::Token(node)])),
 
                 Token::Comma => {
                     let token = middle_node.token.clone();
-                    self.parse_rule_scope_selector(token, vec![node, middle_node], false)
+                    self.parse_rule_scope_selector(token, vec![SelectorNode::Token(node), SelectorNode::Token(middle_node)], false)
+                },
+
+                Token::MacroCallIdentifier(_) => {
+                    let (next_node, selector_node) = self.parse_macro_call_in_selector(middle_node);
+                    let mut selectors = vec![SelectorNode::Token(node), selector_node];
+
+                    match next_node {
+                        Some(next) => {
+                            let token = next.token.clone();
+                            if node_token_matches!(next, ScopeOpen) {
+                                self.parse_rule_scope_body(next, Some(selectors))
+                            } else {
+                                selectors.push(SelectorNode::Token(next));
+                                self.parse_rule_scope_selector(token, selectors, true)
+                            }
+                        },
+                        None => Parsed (None, Some(Construct::Rule { selectors: Some(selectors), body: None }))
+                    }
                 },
 
                 _ => {
                     let token = middle_node.token.clone();
-                    self.parse_rule_scope_selector(token, vec![node, middle_node], true)
+                    self.parse_rule_scope_selector(token, vec![SelectorNode::Token(node), SelectorNode::Token(middle_node)], true)
                 }
             }
         }
@@ -101,38 +120,55 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn parse_rule_scope_selector_begin(&mut self, node: Node<'a>) -> Parsed<'a> {
-        let node = match node.token.value() {
+        match node.token.value() {
+            Token::MacroCallIdentifier(_) => {
+                let (next_node, selector_node) = self.parse_macro_call_in_selector(node);
+                let mut selectors = vec![selector_node];
+
+                match next_node {
+                    Some(next) => {
+                        let token = next.token.clone();
+                        if node_token_matches!(next, ScopeOpen) {
+                            self.parse_rule_scope_body(next, Some(selectors))
+                        } else {
+                            selectors.push(SelectorNode::Token(next));
+                            self.parse_rule_scope_selector(token, selectors, true)
+                        }
+                    },
+                    None => Parsed (None, Some(Construct::Rule { selectors: Some(selectors), body: None }))
+                }
+            },
+
             Token::NameSelector(_) | Token::TagSelectorOrEnumPart(_) |
             Token::StateSelectorOrEnumPart(_) | Token::PseudoSelector(_) |
             Token::QuerySelector(_) | Token::ChildrenSelector |
-            Token::DescendantsSelector => node,
+            Token::DescendantsSelector => {
+                let token = node.token.clone();
+                self.parse_rule_scope_selector(token, vec![SelectorNode::Token(node)], true)
+            },
 
-            Token::ScopeOpen => return self.parse_rule_scope_body(node, None),
+            Token::ScopeOpen => self.parse_rule_scope_body(node, None),
 
-            _ => return Parsed(Some(node), None)
-        };
-
-        let token = node.token.clone();
-
-        self.parse_rule_scope_selector(token, vec![node], true)
+            _ => Parsed(Some(node), None)
+        }
     }
 
     /// Parses rule scope selectors. When `comma_allowed` is true, also accepts
     /// comma as a valid token (the "delimited" path). When false, expects only
     /// selector parts and "{".
     fn parse_rule_scope_selector(
-        &mut self, last_token: SpannedToken<'a>, mut selectors: Vec<Node<'a>>,
+        &mut self, last_token: SpannedToken<'a>, mut selectors: Vec<SelectorNode<'a>>,
         comma_allowed: bool
     ) -> Parsed<'a> {
         let result = if comma_allowed {
             self.advance_until(token_kind_list!("selector part or \"{\"", [
                 Identifier, NameSelector, TagSelectorOrEnumPart, StateSelectorOrEnumPart, PseudoSelector,
-                QuerySelector, ChildrenSelector, DescendantsSelector, ScopeOpen, Comma
+                QuerySelector, ChildrenSelector, DescendantsSelector, MacroCallIdentifier, ScopeOpen, Comma
             ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS)
         } else {
             self.advance_until(token_kind_list!("selector part or \"{\"", [
                 Identifier, NameSelector, TagSelectorOrEnumPart, StateSelectorOrEnumPart, PseudoSelector,
-                QuerySelector, ChildrenSelector, DescendantsSelector, ScopeOpen
+                QuerySelector, ChildrenSelector, DescendantsSelector, MacroCallIdentifier, ScopeOpen
             ]), &TOKEN_KIND_CONSTRUCT_DELIMITERS)
         };
 
@@ -158,8 +194,33 @@ impl<'a> Parser<'a> {
             return self.parse_rule_scope_body(node, Some(selectors))
         }
 
+        if node_token_matches!(node, MacroCallIdentifier(_)) {
+            let (next_node, selector_node) = self.parse_macro_call_in_selector(node);
+            selectors.push(selector_node);
+
+            return match next_node {
+                Some(next) => {
+                    let token = next.token.clone();
+                    if node_token_matches!(next, ScopeOpen) {
+                        self.parse_rule_scope_body(next, Some(selectors))
+                    } else {
+                        selectors.push(SelectorNode::Token(next));
+                        if comma_allowed {
+                            match token.value() {
+                                Token::Comma => self.parse_rule_scope_selector(token, selectors, false),
+                                _ => self.parse_rule_scope_selector(token, selectors, true)
+                            }
+                        } else {
+                            self.parse_rule_scope_selector(token, selectors, true)
+                        }
+                    }
+                },
+                None => Parsed (None, Some(Construct::Rule { selectors: Some(selectors), body: None }))
+            }
+        }
+
         let token = node.token.clone();
-        selectors.push(node);
+        selectors.push(SelectorNode::Token(node));
 
         if comma_allowed {
             match token.value() {
@@ -186,7 +247,7 @@ impl<'a> Parser<'a> {
         );
     }
 
-    pub(crate) fn parse_rule_scope_body(&mut self, body_open_node: Node<'a>, selectors: Option<Vec<Node<'a>>>) -> Parsed<'a> {
+    pub(crate) fn parse_rule_scope_body(&mut self, body_open_node: Node<'a>, selectors: Option<Vec<SelectorNode<'a>>>) -> Parsed<'a> {
         let Some(node) = self.advance() else {
             self.ast_errors.push(
                 ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ScopeClose.name())) },

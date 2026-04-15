@@ -114,12 +114,74 @@ pub(super) trait SpanEnd {
 }
 
 #[derive(Debug)]
+pub enum SelectorNode<'a> {
+    Token(Node<'a>),
+    MacroCall {
+        name: Node<'a>,
+        body: Option<Delimited<'a>>,
+    },
+}
+
+impl<'a> SelectorNode<'a> {
+    pub fn start(&self) -> usize {
+        match self {
+            Self::Token(node) => node.token.start(),
+            Self::MacroCall { name, .. } => name.token.start(),
+        }
+    }
+}
+
+impl<'a> SpanEnd for SelectorNode<'a> {
+    fn end(&self) -> usize {
+        match self {
+            Self::Token(node) => node.token.end(),
+            Self::MacroCall { name, body } => {
+                if let Some(body) = body { return body.end() }
+                name.token.end()
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum MacroBodyContent<'a> {
+    Construct(Option<Vec<Construct<'a>>>),
+    Assignment(Option<Box<Construct<'a>>>),
+    Selector(Option<Vec<SelectorNode<'a>>>),
+}
+
+#[derive(Debug)]
+pub struct MacroBody<'a> {
+    pub open: Node<'a>,
+    pub content: MacroBodyContent<'a>,
+    pub close: Option<Node<'a>>,
+}
+
+impl<'a> SpanEnd for MacroBody<'a> {
+    fn end(&self) -> usize {
+        if let Some(close) = &self.close { return close.token.end() }
+        match &self.content {
+            MacroBodyContent::Construct(Some(items)) => {
+                if let Some(last) = items.last() { return last.end() }
+            },
+            MacroBodyContent::Assignment(Some(item)) => return item.end(),
+            MacroBodyContent::Selector(Some(items)) => {
+                if let Some(last) = items.last() { return last.end() }
+            },
+            _ => {}
+        }
+        self.open.token.end()
+    }
+}
+
+#[derive(Debug)]
 pub enum Construct<'a> {
     Macro {
         declaration: Node<'a>,
         name: Option<Node<'a>>,
         args: Option<Delimited<'a>>,
-        body: Option<Delimited<'a>>
+        return_type: Option<(Node<'a>, Option<Node<'a>>)>,
+        body: Option<MacroBody<'a>>
     },
 
     MacroCall {
@@ -154,7 +216,7 @@ pub enum Construct<'a> {
     },
 
     Rule {
-        selectors: Option<Vec<Node<'a>>>,
+        selectors: Option<Vec<SelectorNode<'a>>>,
         body: Option<Delimited<'a>>
     },
 
@@ -192,7 +254,7 @@ pub enum Construct<'a> {
 }
 
 impl<'a> Construct<'a> {
-    pub fn rule(selectors: Option<Vec<Node<'a>>>, body: Delimited<'a>) -> Self {
+    pub fn rule(selectors: Option<Vec<SelectorNode<'a>>>, body: Delimited<'a>) -> Self {
         Self::Rule { selectors, body: Some(body) }
     }
 
@@ -230,7 +292,7 @@ impl<'a> Construct<'a> {
 
             Self::Rule { selectors, body } => {
                 if let Some(selectors) = selectors {
-                    if let Some(first) = selectors.first() { return first.token.start() }
+                    if let Some(first) = selectors.first() { return first.start() }
                 }
                 if let Some(body) = body { return body.start() }
                 0
@@ -253,8 +315,12 @@ impl<'a> Construct<'a> {
 impl<'a> SpanEnd for Construct<'a> {
     fn end(&self) -> usize {
         match self {
-            Self::Macro { declaration, name, args, body, .. } => {
+            Self::Macro { declaration, name, args, return_type, body } => {
                 if let Some(x) = body { return x.end() }
+                if let Some((arrow, ident)) = return_type {
+                    if let Some(ident) = ident { return ident.token.end() }
+                    return arrow.token.end()
+                }
                 if let Some(x) = args { return x.end() }
                 if let Some(x) = name { return x.token.end() }
                 declaration.token.end()

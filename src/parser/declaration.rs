@@ -5,6 +5,16 @@ use crate::parser::parse_error::{ParseError, ParseErrorMessage};
 use crate::parser::types::*;
 use crate::parser::Parser;
 
+use phf_macros::phf_set;
+
+static MACRO_RETURN_TYPES: phf::Set<&str> = phf_set! {
+    "Construct",
+    "Assignment",
+    "Selector",
+};
+
+static MACRO_RETURN_TYPE_NAMES: [&str; 3] = ["Construct", "Assignment", "Selector"];
+
 impl<'a> Parser<'a> {
     /// Many declarations in rsml just have a datatype after them.
     /// So we can use the same function to parse them.
@@ -257,6 +267,58 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    /// Parses a macro call in selector context (no semicolon terminator required).
+    /// Returns the `SelectorNode::MacroCall` and the next node after the closing paren.
+    pub(crate) fn parse_macro_call_in_selector(
+        &mut self, name_node: Node<'a>
+    ) -> (Option<Node<'a>>, SelectorNode<'a>) {
+        let open_node = match self.advance_until(token_kind_list![ ParensOpen ], &TOKEN_KIND_CONSTRUCT_DELIMITERS) {
+            Some(Ok(node)) => node,
+            Some(Err(node)) => return (Some(node), SelectorNode::MacroCall { name: name_node, body: None }),
+            None => return (None, SelectorNode::MacroCall { name: name_node, body: None }),
+        };
+
+        let mut body_content: Vec<Construct<'a>> = vec![];
+        let mut parens_nestedness: usize = 0;
+
+        let close_node = loop {
+            let node = self.advance();
+
+            match node {
+                Some(Node { token: SpannedToken(_, Token::ParensOpen, _), .. }) =>
+                    parens_nestedness += 1,
+
+                Some(node @ Node { token: SpannedToken(_, Token::ParensClose, _), .. }) => {
+                    if parens_nestedness == 0 { break node }
+                    else { parens_nestedness -= 1 }
+                },
+
+                Some(node) => body_content.push(Construct::Node { node }),
+
+                None => {
+                    let selector_node = SelectorNode::MacroCall {
+                        name: name_node,
+                        body: Some(Delimited::new(open_node, Some(body_content), None)),
+                    };
+
+                    self.ast_errors.push(
+                        ParseError::MissingToken {
+                            msg: Some(ParseErrorMessage::Expected(TokenKind::ParensClose.name()))
+                        },
+                        self.range_from_span((selector_node.start(), selector_node.end()))
+                    );
+
+                    return (None, selector_node)
+                }
+            }
+        };
+
+        (self.advance(), SelectorNode::MacroCall {
+            name: name_node,
+            body: Some(Delimited::new(open_node, Some(body_content), Some(close_node))),
+        })
+    }
+
     pub(crate) fn parse_macro(&mut self, node: Node<'a>) -> Parsed<'a> {
         if !node_token_matches!(node, MacroDeclaration) { return Parsed (Some(node), None) }
 
@@ -268,34 +330,83 @@ impl<'a> Parser<'a> {
         ) {
             Some(Ok(node)) => Some(node),
             Some(Err(node)) => {
-                let construct = Construct::Macro { declaration: declaration_node, name: None, args: None, body: None };
+                let construct = Construct::Macro { declaration: declaration_node, name: None, args: None, return_type: None, body: None };
                 return Parsed (Some(node), Some(construct))
             },
             None => {
-                let construct = Construct::Macro { declaration: declaration_node, name: None, args: None, body: None };
+                let construct = Construct::Macro { declaration: declaration_node, name: None, args: None, return_type: None, body: None };
                 return Parsed (self.advance(), Some(construct))
             },
         };
 
         let args_or_body_node = match self.advance_until(
-            token_kind_list!("macro arguments or body", [ ScopeOpen, ParensOpen ]),
+            token_kind_list!("macro arguments, return type or body", [ ScopeOpen, ParensOpen, ReturnArrow ]),
             &TOKEN_KIND_CONSTRUCT_DELIMITERS
         ) {
             Some(Ok(node)) => node,
             Some(Err(node)) => return Parsed (Some(node), Some(
-                Construct::Macro { declaration: declaration_node, name: name_node, args: None, body: None }
+                Construct::Macro { declaration: declaration_node, name: name_node, args: None, return_type: None, body: None }
             )),
             None => return Parsed (None, Some(
-                Construct::Macro { declaration: declaration_node, name: name_node, args: None, body: None }
+                Construct::Macro { declaration: declaration_node, name: name_node, args: None, return_type: None, body: None }
             )),
         };
 
         if matches!(args_or_body_node.token.value(), Token::ParensOpen) {
             self.parse_macro_args(args_or_body_node, declaration_node, name_node)
 
+        } else if matches!(args_or_body_node.token.value(), Token::ReturnArrow) {
+            let (return_type, return_type_str) = self.parse_macro_return_type(args_or_body_node);
+
+            let body_node = match self.advance_until(token_kind_list![ ScopeOpen ], &TOKEN_KIND_CONSTRUCT_DELIMITERS) {
+                Some(Ok(node)) => node,
+                Some(Err(node)) => return Parsed (Some(node), Some(
+                    Construct::Macro { declaration: declaration_node, name: name_node, args: None, return_type: Some(return_type), body: None }
+                )),
+                None => return Parsed (None, Some(
+                    Construct::Macro { declaration: declaration_node, name: name_node, args: None, return_type: Some(return_type), body: None }
+                )),
+            };
+
+            self.parse_macro_body(body_node, declaration_node, name_node, None, Some(return_type), return_type_str)
+
         } else {
-            self.parse_macro_body(args_or_body_node, declaration_node, name_node, None)
+            self.parse_macro_body(args_or_body_node, declaration_node, name_node, None, None, None)
         }
+    }
+
+    /// Parses the identifier after `->` and validates it against the allowed return types.
+    /// Returns the (arrow_node, ident_node) pair and the identifier string if valid.
+    fn parse_macro_return_type(
+        &mut self, arrow_node: Node<'a>
+    ) -> ((Node<'a>, Option<Node<'a>>), Option<&'a str>) {
+        let ident_node = match self.advance_until(
+            token_kind_list!("macro return type", [ Identifier ]),
+            &TOKEN_KIND_CONSTRUCT_DELIMITERS
+        ) {
+            Some(Ok(node)) => node,
+            Some(Err(_)) | None => return ((arrow_node, None), None),
+        };
+
+        let return_type_str = if let Token::Identifier(name) = ident_node.token.value() {
+            if MACRO_RETURN_TYPES.contains(*name) {
+                Some(*name)
+            } else {
+                self.ast_errors.push(
+                    ParseError::UnexpectedTokens {
+                        msg: Some(ParseErrorMessage::correction(
+                            Some(name.to_string()),
+                            self.range_from_span(ident_node.token.span()),
+                            &MACRO_RETURN_TYPE_NAMES
+                        ))
+                    },
+                    self.range_from_span(ident_node.token.span())
+                );
+                None
+            }
+        } else { None };
+
+        ((arrow_node, Some(ident_node)), return_type_str)
     }
 
     fn parse_macro_args(
@@ -313,6 +424,7 @@ impl<'a> Parser<'a> {
                     declaration: declaration_node,
                     name: name_node,
                     args: Some(Delimited { left: args_open_node, content: None, right: None }),
+                    return_type: None,
                     body: None
                 }
             )),
@@ -321,6 +433,7 @@ impl<'a> Parser<'a> {
                     declaration: declaration_node,
                     name: name_node,
                     args: Some(Delimited { left: args_open_node, content: None, right: None }),
+                    return_type: None,
                     body: None
                 }
             )),
@@ -355,6 +468,7 @@ impl<'a> Parser<'a> {
                         declaration: declaration_node,
                         name: name_node,
                         args: Some(Delimited::new(args_open_node, Some(args), None)),
+                        return_type: None,
                         body: None
                     }
                 )),
@@ -363,6 +477,7 @@ impl<'a> Parser<'a> {
                         declaration: declaration_node,
                         name: name_node,
                         args: Some(Delimited::new(args_open_node, Some(args), None)),
+                        return_type: None,
                         body: None
                     }
                 )),
@@ -399,13 +514,17 @@ impl<'a> Parser<'a> {
         args_content_node: Option<Vec<Construct<'a>>>,
         args_close_node: Option<Node<'a>>,
     ) -> Parsed<'a> {
-        let body_node = match self.advance_until(token_kind_list![ ScopeOpen ], &TOKEN_KIND_CONSTRUCT_DELIMITERS) {
+        let body_or_arrow_node = match self.advance_until(
+            token_kind_list![ ScopeOpen, ReturnArrow ],
+            &TOKEN_KIND_CONSTRUCT_DELIMITERS
+        ) {
             Some(Ok(node)) => node,
             Some(Err(node)) => return Parsed (Some(node), Some(
                 Construct::Macro {
                     declaration: declaration_node,
                     name: name_node,
                     args: Some(Delimited { left: args_open_node, content: args_content_node, right: args_close_node }),
+                    return_type: None,
                     body: None
                 }
             )),
@@ -414,17 +533,32 @@ impl<'a> Parser<'a> {
                     declaration: declaration_node,
                     name: name_node,
                     args: Some(Delimited { left: args_open_node, content: args_content_node, right: args_close_node }),
+                    return_type: None,
                     body: None
                 }
             )),
         };
 
-        return self.parse_macro_body(
-            body_node,
-            declaration_node,
-            name_node,
-            Some(Delimited::new(args_open_node, args_content_node, args_close_node))
-        )
+        let args = Some(Delimited::new(args_open_node, args_content_node, args_close_node));
+
+        if matches!(body_or_arrow_node.token.value(), Token::ReturnArrow) {
+            let (return_type, return_type_str) = self.parse_macro_return_type(body_or_arrow_node);
+
+            let body_node = match self.advance_until(token_kind_list![ ScopeOpen ], &TOKEN_KIND_CONSTRUCT_DELIMITERS) {
+                Some(Ok(node)) => node,
+                Some(Err(node)) => return Parsed (Some(node), Some(
+                    Construct::Macro { declaration: declaration_node, name: name_node, args, return_type: Some(return_type), body: None }
+                )),
+                None => return Parsed (None, Some(
+                    Construct::Macro { declaration: declaration_node, name: name_node, args, return_type: Some(return_type), body: None }
+                )),
+            };
+
+            self.parse_macro_body(body_node, declaration_node, name_node, args, Some(return_type), return_type_str)
+
+        } else {
+            self.parse_macro_body(body_or_arrow_node, declaration_node, name_node, args, None, None)
+        }
     }
 
     pub(crate) fn parse_macro_body(
@@ -432,7 +566,24 @@ impl<'a> Parser<'a> {
         body_open_node: Node<'a>,
         declaration_node: Node<'a>,
         name_node: Option<Node<'a>>,
-        args_node: Option<Delimited<'a>>
+        args_node: Option<Delimited<'a>>,
+        return_type: Option<(Node<'a>, Option<Node<'a>>)>,
+        return_type_str: Option<&str>,
+    ) -> Parsed<'a> {
+        match return_type_str {
+            Some("Assignment") => self.parse_macro_body_assignment(body_open_node, declaration_node, name_node, args_node, return_type),
+            Some("Selector") => self.parse_macro_body_selector(body_open_node, declaration_node, name_node, args_node, return_type),
+            _ => self.parse_macro_body_construct(body_open_node, declaration_node, name_node, args_node, return_type),
+        }
+    }
+
+    fn parse_macro_body_construct(
+        &mut self,
+        body_open_node: Node<'a>,
+        declaration_node: Node<'a>,
+        name_node: Option<Node<'a>>,
+        args_node: Option<Delimited<'a>>,
+        return_type: Option<(Node<'a>, Option<Node<'a>>)>,
     ) -> Parsed<'a> {
         let Some(node) = self.advance() else {
             self.ast_errors.push(
@@ -443,7 +594,8 @@ impl<'a> Parser<'a> {
                 declaration: declaration_node,
                 name: name_node,
                 args: args_node,
-                body: Some(Delimited::new(body_open_node, None, None))
+                return_type,
+                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Construct(None), close: None })
             }));
         };
 
@@ -452,7 +604,8 @@ impl<'a> Parser<'a> {
                 declaration: declaration_node,
                 name: name_node,
                 args: args_node,
-                body: Some(Delimited::new(body_open_node, None, Some(node)))
+                return_type,
+                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Construct(None), close: Some(node) })
             }))
         }
 
@@ -493,7 +646,8 @@ impl<'a> Parser<'a> {
                 declaration: declaration_node,
                 name: name_node,
                 args: args_node,
-                body: Some(Delimited::new(body_open_node, Some(body_content), node))
+                return_type,
+                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Construct(Some(body_content)), close: node })
             }))
 
         } else {
@@ -501,7 +655,192 @@ impl<'a> Parser<'a> {
                 declaration: declaration_node,
                 name: name_node,
                 args: args_node,
-                body: Some(Delimited::new(body_open_node, Some(body_content), None))
+                return_type,
+                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Construct(Some(body_content)), close: None })
+            };
+
+            self.ast_errors.push(
+                ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ScopeClose.name())) },
+                self.range_from_span(clamp_span_to_end(construct.end()))
+            );
+
+            Parsed (self.advance(), Some(construct))
+        }
+    }
+
+    fn parse_macro_body_assignment(
+        &mut self,
+        body_open_node: Node<'a>,
+        declaration_node: Node<'a>,
+        name_node: Option<Node<'a>>,
+        args_node: Option<Delimited<'a>>,
+        return_type: Option<(Node<'a>, Option<Node<'a>>)>,
+    ) -> Parsed<'a> {
+        let Some(node) = self.advance() else {
+            self.ast_errors.push(
+                ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ScopeClose.name())) },
+                self.range_from_span(clamp_span_to_end(body_open_node.token.end()))
+            );
+            return Parsed (None, Some(Construct::Macro {
+                declaration: declaration_node,
+                name: name_node,
+                args: args_node,
+                return_type,
+                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Assignment(None), close: None })
+            }));
+        };
+
+        if node_token_matches!(node, ScopeClose) {
+            return Parsed (self.advance(), Some(Construct::Macro {
+                declaration: declaration_node,
+                name: name_node,
+                args: args_node,
+                return_type,
+                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Assignment(None), close: Some(node) })
+            }))
+        }
+
+        let (node_status, datatype) =
+            self.parse_datatype(Some(node), TOKEN_KIND_CONSTRUCT_DELIMITERS);
+
+        let close_node = match node_status {
+            NodeStatus::Exists => match self.advance_until(token_kind_list![ ScopeClose ], &TOKEN_KIND_CONSTRUCT_DELIMITERS) {
+                Some(Ok(node)) => Some(node),
+                Some(Err(node)) => {
+                    return Parsed (Some(node), Some(Construct::Macro {
+                        declaration: declaration_node,
+                        name: name_node,
+                        args: args_node,
+                        return_type,
+                        body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Assignment(datatype.map(Box::new)), close: None })
+                    }))
+                },
+                None => None,
+            },
+
+            NodeStatus::Err(node) => {
+                if node_token_matches!(node, ScopeClose) { Some(node) }
+                else {
+                    return Parsed (Some(node), Some(Construct::Macro {
+                        declaration: declaration_node,
+                        name: name_node,
+                        args: args_node,
+                        return_type,
+                        body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Assignment(datatype.map(Box::new)), close: None })
+                    }))
+                }
+            },
+
+            NodeStatus::None => None,
+        };
+
+        if close_node.is_none() {
+            let construct = Construct::Macro {
+                declaration: declaration_node,
+                name: name_node,
+                args: args_node,
+                return_type,
+                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Assignment(datatype.map(Box::new)), close: None })
+            };
+
+            self.ast_errors.push(
+                ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ScopeClose.name())) },
+                self.range_from_span(clamp_span_to_end(construct.end()))
+            );
+
+            return Parsed (self.advance(), Some(construct))
+        }
+
+        Parsed (self.advance(), Some(Construct::Macro {
+            declaration: declaration_node,
+            name: name_node,
+            args: args_node,
+            return_type,
+            body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Assignment(datatype.map(Box::new)), close: close_node })
+        }))
+    }
+
+    fn parse_macro_body_selector(
+        &mut self,
+        body_open_node: Node<'a>,
+        declaration_node: Node<'a>,
+        name_node: Option<Node<'a>>,
+        args_node: Option<Delimited<'a>>,
+        return_type: Option<(Node<'a>, Option<Node<'a>>)>,
+    ) -> Parsed<'a> {
+        let Some(node) = self.advance() else {
+            self.ast_errors.push(
+                ParseError::MissingToken { msg: Some(ParseErrorMessage::Expected(TokenKind::ScopeClose.name())) },
+                self.range_from_span(clamp_span_to_end(body_open_node.token.end()))
+            );
+            return Parsed (None, Some(Construct::Macro {
+                declaration: declaration_node,
+                name: name_node,
+                args: args_node,
+                return_type,
+                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Selector(None), close: None })
+            }));
+        };
+
+        if node_token_matches!(node, ScopeClose) {
+            return Parsed (self.advance(), Some(Construct::Macro {
+                declaration: declaration_node,
+                name: name_node,
+                args: args_node,
+                return_type,
+                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Selector(None), close: Some(node) })
+            }))
+        }
+
+        let mut selectors: Vec<SelectorNode<'a>> = vec![];
+
+        let (node, parse_ended_reason) =
+            self.parse_loop_inner(node, |parser, node| {
+                if node_token_matches!(node, ScopeClose) {
+                    return Some((node, true))
+                }
+
+                if node_token_matches!(node, MacroCallIdentifier(_)) {
+                    let (next_node, selector_node) = parser.parse_macro_call_in_selector(node);
+                    selectors.push(selector_node);
+                    return match next_node {
+                        Some(next) => {
+                            let end_parsing = matches!(next.token.value(), Token::ScopeClose);
+                            Some((next, end_parsing))
+                        },
+                        None => None,
+                    }
+                }
+
+                selectors.push(SelectorNode::Token(node));
+
+                match parser.advance() {
+                    Some(next) => {
+                        let end_parsing = matches!(next.token.value(), Token::ScopeClose);
+                        Some((next, end_parsing))
+                    },
+                    None => None,
+                }
+            });
+
+        if matches!(parse_ended_reason, ParseEndedReason::Manual) {
+            let content = if selectors.is_empty() { None } else { Some(selectors) };
+            return Parsed (self.advance(), Some(Construct::Macro {
+                declaration: declaration_node,
+                name: name_node,
+                args: args_node,
+                return_type,
+                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Selector(content), close: node })
+            }))
+
+        } else {
+            let content = if selectors.is_empty() { None } else { Some(selectors) };
+            let construct = Construct::Macro {
+                declaration: declaration_node,
+                name: name_node,
+                args: args_node,
+                return_type,
+                body: Some(MacroBody { open: body_open_node, content: MacroBodyContent::Selector(content), close: None })
             };
 
             self.ast_errors.push(
