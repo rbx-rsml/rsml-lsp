@@ -1072,8 +1072,10 @@ name = "rsml-lsp"
 version = "0.2.4"
 dependencies = [
  "futures",
+ "indexmap",
  "phf 0.13.1",
  "phf_macros 0.13.1",
+ "rangemap",
  "rbx-rsml",
  "rbx_reflection",
  "rbx_reflection_database",

@@ -36,6 +36,7 @@ use rbx_rsml::typechecker::{
     luaurc::{Aliases, Luaurc},
 };
 
+pub mod autocomplete;
 pub mod workspaces;
 use workspaces::{Document, Documents, Workspace, Workspaces};
 
@@ -1027,9 +1028,46 @@ impl<'a> Backend {
                             mut errors,
                             derives,
                             dependencies: type_dependencies,
-                            definitions,
+                            mut definitions,
                         } = typechecked;
                         document.dependencies = type_dependencies;
+
+                        // Build autocomplete definitions on top of typechecker's Selector/Scope
+                        match &luaurc {
+                            Status::Some(luaurc_ref) => {
+                                autocomplete::build_definitions(
+                                    &parsed, &mut definitions, &current_path, Some(luaurc_ref),
+                                );
+                            }
+                            Status::None => {
+                                autocomplete::build_definitions(
+                                    &parsed, &mut definitions, &current_path, None,
+                                );
+                            }
+                            Status::Unknown => {
+                                let workspaces_for_ac = match workspaces {
+                                    Some(ws) => ws,
+                                    None => &self.workspaces.lock().await,
+                                };
+                                if let Some(ws_mutex) = self
+                                    .workspace_for_path(&current_path, workspaces_for_ac)
+                                    .await
+                                {
+                                    let workspace = ws_mutex.lock().await;
+                                    autocomplete::build_definitions(
+                                        &parsed,
+                                        &mut definitions,
+                                        &current_path,
+                                        workspace.luaurc.as_ref(),
+                                    );
+                                } else {
+                                    autocomplete::build_definitions(
+                                        &parsed, &mut definitions, &current_path, None,
+                                    );
+                                }
+                            }
+                        }
+
                         document.definitions = definitions;
 
                         let mut dependencies = document.dependencies.clone();
@@ -1133,13 +1171,17 @@ impl<'a> Backend {
                         ).await;
 
                         {
+                            let dummy_path = PathBuf::from("/");
                             let TypecheckedRsml {
                                 errors,
                                 derives: _,
                                 dependencies: type_dependencies,
-                                definitions,
-                            } = Typechecker::new(&parsed, &PathBuf::from("/"), None).await;
+                                mut definitions,
+                            } = Typechecker::new(&parsed, &dummy_path, None).await;
                             document.dependencies = type_dependencies;
+                            autocomplete::build_definitions(
+                                &parsed, &mut definitions, &dummy_path, None,
+                            );
                             document.definitions = definitions;
                             (errors, None)
                         }
@@ -1481,7 +1523,9 @@ mod tests {
         let data = Typechecker::new(&parsed, &dummy_path, None).await;
         let mut document = Document::new(source.to_string());
         document.dependencies = data.dependencies;
-        document.definitions = data.definitions;
+        let mut definitions = data.definitions;
+        crate::autocomplete::build_definitions(&parsed, &mut definitions, &dummy_path, None);
+        document.definitions = definitions;
         document
     }
 
