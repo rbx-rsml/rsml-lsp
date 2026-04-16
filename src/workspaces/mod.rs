@@ -5,12 +5,12 @@ mod documents;
 pub use documents::*;
 
 mod document;
-pub use document::*;
+pub use document::Document;
 
 mod workspace;
 pub use workspace::Workspace;
 
-use crate::luaurc::Luaurc;
+use rbx_rsml::typechecker::luaurc::Luaurc;
 
 #[derive(Debug)]
 pub struct Workspaces(HashMap<PathBuf, Arc<Mutex<Workspace>>>);

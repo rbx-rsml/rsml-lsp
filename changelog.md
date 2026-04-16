@@ -10,6 +10,7 @@
 - Valid macro arguments (`&{ident}`) no longer throw type errors.
 - Creating a pseudo selector for `StyleQuery` no longer throws a type error.
 - Skin color codes no longer throw errors when used in property assignment.
+- Minus signs in front of numeric datatypes no longer throw a parse error.
 
 # v0.2.3
 ## Fixes

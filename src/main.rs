@@ -1,4 +1,3 @@
-#![feature(generic_const_exprs)]
 #![feature(iter_intersperse)]
 
 use std::collections::{HashSet, VecDeque};
@@ -7,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 
-use ropey::Rope;
 use serde_json::Value;
 use tokio::fs;
 use tokio::sync::{Mutex, MutexGuard};
@@ -21,50 +19,53 @@ use tower_lsp::lsp_types::{
     FileOperationFilter, FileOperationPattern, FileOperationRegistrationOptions, FileSystemWatcher,
     GlobPattern, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
     HoverProviderCapability, InitializeParams, InitializeResult, LocationLink, MarkedString,
-    MessageType, OneOf, Position, Range, Registration, RelativePattern, ServerCapabilities,
-    ShowMessageParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url, WatchKind,
-    WorkspaceEdit, WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities,
+    MessageType, NumberOrString, OneOf, Position, Range, Registration, RelativePattern,
+    ServerCapabilities, ShowMessageParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextEdit, Url, WatchKind, WorkspaceEdit, WorkspaceFileOperationsServerCapabilities,
+    WorkspaceServerCapabilities,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-mod lexer;
-use lexer::Lexer;
+use ropey::Rope;
 
-mod parser;
-use parser::Parser;
-
-mod typechecker;
-use typechecker::{DefinitionKind, PushTypeError, Typechecker};
-
-pub mod range_from_span;
-
-pub mod multibimap;
-
-use crate::lexer::SpannedToken;
-use crate::luaurc::Aliases;
-use crate::range_from_span::RangeFromSpan;
-use crate::typechecker::{CyclicKind, TypeError};
-use crate::workspaces::Workspace;
-
-mod list;
-
-mod luaurc;
-use luaurc::Luaurc;
-
-pub mod normalize_path;
+use rbx_rsml::lexer::{Lexer, SpannedToken};
+use rbx_rsml::parser::Parser;
+use rbx_rsml::range_from_span::RangeFromSpan;
+use rbx_rsml::typechecker::{
+    CyclicKind, DefinitionKind, PushTypeError, TypeError, TypecheckedRsml, Typechecker,
+    luaurc::{Aliases, Luaurc},
+};
 
 pub mod workspaces;
-use workspaces::{Document, Documents, Workspaces};
+use workspaces::{Document, Documents, Workspace, Workspaces};
 
-mod string_clip {
-    pub trait StringClip {
-        fn clip<'a>(&'a self, start: usize, end: usize) -> &'a str;
+fn convert_range(range: rbx_rsml::types::Range) -> Range {
+    Range {
+        start: Position {
+            line: range.start.line,
+            character: range.start.character,
+        },
+        end: Position {
+            line: range.end.line,
+            character: range.end.character,
+        },
     }
+}
 
-    impl StringClip for str {
-        fn clip<'a>(&'a self, start: usize, end: usize) -> &'a str {
-            &self[start..self.len() - end]
-        }
+fn convert_diagnostic(diag: rbx_rsml::types::Diagnostic) -> tower_lsp::lsp_types::Diagnostic {
+    tower_lsp::lsp_types::Diagnostic {
+        range: convert_range(diag.range),
+        severity: Some(match diag.severity {
+            rbx_rsml::types::Severity::Error => tower_lsp::lsp_types::DiagnosticSeverity::ERROR,
+            rbx_rsml::types::Severity::Warning => tower_lsp::lsp_types::DiagnosticSeverity::WARNING,
+        }),
+        code: Some(NumberOrString::String(diag.code)),
+        code_description: None,
+        source: Some(String::from("RSML LSP")),
+        message: diag.message,
+        related_information: None,
+        tags: None,
+        data: diag.data,
     }
 }
 
@@ -91,34 +92,6 @@ impl<T> Status<T> {
             Status::None => Status::None,
         }
     }
-}
-
-#[macro_export]
-macro_rules! collection {
-    // map-like
-    ($($k:expr => $v:expr),* $(,)?) => {{
-        use std::iter::{Iterator, IntoIterator};
-        Iterator::collect(IntoIterator::into_iter([$(($k, $v),)*]))
-    }};
-    // set-like
-    ($($v:expr),* $(,)?) => {{
-        use std::iter::{Iterator, IntoIterator};
-        Iterator::collect(IntoIterator::into_iter([$($v,)*]))
-    }};
-}
-
-#[macro_export]
-macro_rules! lazy_collection {
-    // map-like
-    ($($k:expr => $v:expr),* $(,)?) => {{
-        use std::iter::{Iterator, IntoIterator};
-        LazyLock::new(|| Iterator::collect(IntoIterator::into_iter([$(($k, $v),)*])))
-    }};
-    // set-like
-    ($($v:expr),* $(,)?) => {{
-        use std::iter::{Iterator, IntoIterator};
-        LazyLock::new(|| Iterator::collect(IntoIterator::into_iter([$($v,)*])))
-    }};
 }
 
 async fn resolve_luaurc(path: &Path) -> Option<Luaurc> {
@@ -207,10 +180,7 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
 
                 completion_provider: Some(CompletionOptions {
-                    trigger_characters: Some(vec![
-                        ":".to_string(),
-                        ".".to_string(),
-                    ]),
+                    trigger_characters: Some(vec![":".to_string(), ".".to_string()]),
                     ..CompletionOptions::default()
                 }),
 
@@ -565,9 +535,11 @@ impl LanguageServer for Backend {
                 DefinitionKind::Derive { path } => {
                     if let Ok(target_uri) = Url::from_file_path(path) {
                         return Ok(Some(GotoDefinitionResponse::Link(vec![LocationLink {
-                            origin_selection_range: Some(Range::from_span(
-                                &rope,
-                                (*span.start(), *span.end()),
+                            origin_selection_range: Some(convert_range(
+                                rbx_rsml::types::Range::from_span(
+                                    &rope,
+                                    (*span.start(), *span.end()),
+                                ),
                             )),
                             target_uri,
                             target_range: Range {
@@ -646,7 +618,10 @@ impl LanguageServer for Backend {
 
             return Ok(Some(Hover {
                 contents,
-                range: Some(Range::from_span(&rope, (*span.start(), *span.end()))),
+                range: Some(convert_range(rbx_rsml::types::Range::from_span(
+                    &rope,
+                    (*span.start(), *span.end()),
+                ))),
             }));
         }
 
@@ -675,13 +650,12 @@ impl LanguageServer for Backend {
         };
 
         let items = match kind {
-            DefinitionKind::Scope { type_definition } => {
-                get_property_completions(type_definition)
-            }
+            DefinitionKind::Scope { type_definition } => get_property_completions(type_definition),
 
-            DefinitionKind::Assignment { property_name, type_definition } => {
-                get_enum_shorthand_completions(type_definition, property_name)
-            }
+            DefinitionKind::Assignment {
+                property_name,
+                type_definition,
+            } => get_enum_shorthand_completions(type_definition, property_name),
 
             DefinitionKind::EnumName => get_enum_name_completions(),
 
@@ -693,9 +667,7 @@ impl LanguageServer for Backend {
                 }]
             }
 
-            DefinitionKind::EnumVariant { enum_name } => {
-                get_enum_variant_completions(enum_name)
-            }
+            DefinitionKind::EnumVariant { enum_name } => get_enum_variant_completions(enum_name),
 
             _ => return Ok(None),
         };
@@ -776,7 +748,7 @@ impl LanguageServer for Backend {
             };
 
             let edit = WorkspaceEdit {
-                changes: Some(collection! {
+                changes: Some(rbx_rsml::collection! {
                     uri.clone() => vec![TextEdit {
                         range: Range {
                             start: Position::new(start_line, start_char),
@@ -800,9 +772,10 @@ impl LanguageServer for Backend {
     }
 }
 
-
 fn get_enum_name_completions() -> Vec<CompletionItem> {
-    let Ok(db) = rbx_reflection_database::get() else { return vec![] };
+    let Ok(db) = rbx_reflection_database::get() else {
+        return vec![];
+    };
     db.enums
         .keys()
         .map(|name| CompletionItem {
@@ -814,7 +787,9 @@ fn get_enum_name_completions() -> Vec<CompletionItem> {
 }
 
 fn get_enum_variant_completions(enum_name: &str) -> Vec<CompletionItem> {
-    let Ok(db) = rbx_reflection_database::get() else { return vec![] };
+    let Ok(db) = rbx_reflection_database::get() else {
+        return vec![];
+    };
     let Some(enum_desc) = db.enums.get(enum_name) else {
         return vec![];
     };
@@ -843,12 +818,20 @@ fn get_enum_shorthand_completions(
         return get_enum_variant_completions(enum_name);
     }
 
-    let Ok(db) = rbx_reflection_database::get() else { return vec![] };
+    let Ok(db) = rbx_reflection_database::get() else {
+        return vec![];
+    };
     for class_name in class_names {
-        let Some(class_desc) = db.classes.get(class_name.as_str()) else { continue };
+        let Some(class_desc) = db.classes.get(class_name.as_str()) else {
+            continue;
+        };
         for ancestor in db.superclasses_iter(class_desc) {
-            let Some(prop_desc) = ancestor.properties.get(property_name) else { continue };
-            let rbx_reflection::DataType::Enum(enum_name) = &prop_desc.data_type else { continue };
+            let Some(prop_desc) = ancestor.properties.get(property_name) else {
+                continue;
+            };
+            let rbx_reflection::DataType::Enum(enum_name) = &prop_desc.data_type else {
+                continue;
+            };
             return get_enum_variant_completions(enum_name);
         }
     }
@@ -860,7 +843,9 @@ fn get_property_completions(class_names: &[String]) -> Vec<CompletionItem> {
     use rbx_reflection::PropertyKind;
     use std::collections::HashMap;
 
-    let Ok(db) = rbx_reflection_database::get() else { return vec![] };
+    let Ok(db) = rbx_reflection_database::get() else {
+        return vec![];
+    };
 
     let mut class_property_sets: Vec<HashMap<&str, &rbx_reflection::PropertyDescriptor>> =
         Vec::new();
@@ -994,12 +979,11 @@ impl<'a> Backend {
 
                 let uri_file_path = uri.to_file_path();
 
-                let (typechecked, current_path) = match uri_file_path {
+                let (type_errors, current_path) = match uri_file_path {
                     Ok(current_path) => {
                         let typechecked = match luaurc.as_deref_mut() {
                             Status::Some(luaurc) => {
-                                Typechecker::new(parsed, &current_path, Some(luaurc), &mut document)
-                                    .await
+                                Typechecker::new(&parsed, &current_path, Some(luaurc)).await
                             }
 
                             Status::Unknown => 'outer: {
@@ -1022,28 +1006,31 @@ impl<'a> Backend {
                                     };
 
                                     break 'outer Typechecker::new(
-                                        parsed,
+                                        &parsed,
                                         &current_path,
                                         Some(luaurc),
-                                        &mut document,
                                     )
                                     .await;
                                 }
 
-                                Typechecker::new(parsed, &current_path, None, &mut document).await
+                                Typechecker::new(&parsed, &current_path, None).await
                             }
 
-                            Status::None => {
-                                Typechecker::new(parsed, &current_path, None, &mut document).await
-                            }
+                            Status::None => Typechecker::new(&parsed, &current_path, None).await,
                         };
 
                         // We need to update all documents that this one depends on.
                         // TODO: Reimplement this to a more sophisticated method that
                         // doesn't completely re-diagnose each dependant.
 
-                        let derives = typechecked.1;
-                        let mut typechecked = typechecked.0;
+                        let TypecheckedRsml {
+                            mut errors,
+                            derives,
+                            dependencies: type_dependencies,
+                            definitions,
+                        } = typechecked;
+                        document.dependencies = type_dependencies;
+                        document.definitions = definitions;
 
                         let mut dependencies = document.dependencies.clone();
 
@@ -1128,17 +1115,15 @@ impl<'a> Backend {
                                 continue;
                             };
 
-                            typechecked.parsed.ast_errors.push(
+                            errors.push(
                                 TypeError::CyclicDerive {
                                     kind: CyclicKind::External(ancestry_chain),
                                 },
-                                typechecked
-                                    .parsed
-                                    .range_from_span((*span.start(), *span.end())),
+                                parsed.range_from_span((*span.start(), *span.end())),
                             );
                         }
 
-                        (typechecked, Some(current_path))
+                        (errors, Some(current_path))
                     }
 
                     Err(_) => {
@@ -1147,16 +1132,27 @@ impl<'a> Backend {
                             String::from("Could not get the path for the current files. You may experience issues with derives being resolved.")
                         ).await;
 
-                        (
-                            Typechecker::new(parsed, &PathBuf::from("/"), None, &mut document)
-                                .await
-                                .0,
-                            None,
-                        )
+                        {
+                            let TypecheckedRsml {
+                                errors,
+                                derives: _,
+                                dependencies: type_dependencies,
+                                definitions,
+                            } = Typechecker::new(&parsed, &PathBuf::from("/"), None).await;
+                            document.dependencies = type_dependencies;
+                            document.definitions = definitions;
+                            (errors, None)
+                        }
                     }
                 };
 
-                (typechecked.parsed.ast_errors.0, current_path)
+                let mut all_errors = parsed.ast_errors.0;
+                all_errors.extend(type_errors.0);
+
+                (
+                    all_errors.into_iter().map(convert_diagnostic).collect(),
+                    current_path,
+                )
             };
 
             self.client
@@ -1273,21 +1269,13 @@ async fn test() {
     let lexed = Lexer::new(&contents);
     println!("{:#?}", lexed.collect::<Vec<SpannedToken>>());
 
-    let parsed: Parser<'_> = Parser::new(Lexer::new(&contents));
-    //println!("{:#?} {:#?}", parsed.ast, parsed.ast_errors);
+    let parsed = Parser::new(Lexer::new(&contents));
 
-    let typechecked = Typechecker::new(
-        parsed,
-        &PathBuf::from("/"),
-        None,
-        &mut Document::new(contents.clone()),
-    )
-    .await
-    .0;
+    let typechecked = Typechecker::new(&parsed, &PathBuf::from("/"), None).await;
 
     println!(
-        "{:#?} {:#?}",
-        typechecked.parsed.ast, typechecked.parsed.ast_errors
+        "{:#?} {:#?} {:#?}",
+        parsed.ast, parsed.ast_errors, typechecked.errors
     );
 }
 
@@ -1370,7 +1358,6 @@ mod tests {
     use super::*;
     use tower_lsp::lsp_types::CompletionItemKind;
 
-
     #[test]
     fn completions_for_frame_include_size() {
         let items = get_property_completions(&vec!["Frame".to_string()]);
@@ -1383,13 +1370,18 @@ mod tests {
     #[test]
     fn completions_have_property_kind() {
         let items = get_property_completions(&vec!["Frame".to_string()]);
-        assert!(items.iter().all(|item| item.kind == Some(CompletionItemKind::PROPERTY)));
+        assert!(
+            items
+                .iter()
+                .all(|item| item.kind == Some(CompletionItemKind::PROPERTY))
+        );
     }
 
     #[test]
     fn completions_intersection_for_union_types() {
         let frame_items = get_property_completions(&vec!["Frame".to_string()]);
-        let union_items = get_property_completions(&vec!["Frame".to_string(), "TextButton".to_string()]);
+        let union_items =
+            get_property_completions(&vec!["Frame".to_string(), "TextButton".to_string()]);
         assert!(union_items.len() <= frame_items.len());
         let union_labels: Vec<&str> = union_items.iter().map(|item| item.label.as_str()).collect();
         assert!(union_labels.contains(&"Name"));
@@ -1411,7 +1403,11 @@ mod tests {
     fn enum_name_completions_not_empty() {
         let items = get_enum_name_completions();
         assert!(!items.is_empty());
-        assert!(items.iter().all(|item| item.kind == Some(CompletionItemKind::ENUM)));
+        assert!(
+            items
+                .iter()
+                .all(|item| item.kind == Some(CompletionItemKind::ENUM))
+        );
         let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
         assert!(labels.contains(&"AutomaticSize"));
     }
@@ -1420,7 +1416,11 @@ mod tests {
     fn enum_variant_completions() {
         let items = get_enum_variant_completions("AutomaticSize");
         assert!(!items.is_empty());
-        assert!(items.iter().all(|item| item.kind == Some(CompletionItemKind::ENUM_MEMBER)));
+        assert!(
+            items
+                .iter()
+                .all(|item| item.kind == Some(CompletionItemKind::ENUM_MEMBER))
+        );
         let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
         assert!(labels.contains(&"XY"));
     }
@@ -1433,10 +1433,7 @@ mod tests {
 
     #[test]
     fn enum_shorthand_infers_from_property() {
-        let items = get_enum_shorthand_completions(
-            &vec!["Frame".to_string()],
-            "AutomaticSize",
-        );
+        let items = get_enum_shorthand_completions(&vec!["Frame".to_string()], "AutomaticSize");
         assert!(!items.is_empty());
         let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
         assert!(labels.contains(&"XY"));
@@ -1444,10 +1441,7 @@ mod tests {
 
     #[test]
     fn enum_shorthand_override_flex_mode() {
-        let items = get_enum_shorthand_completions(
-            &vec!["UIFlexItem".to_string()],
-            "FlexMode",
-        );
+        let items = get_enum_shorthand_completions(&vec!["UIFlexItem".to_string()], "FlexMode");
         assert!(!items.is_empty());
         // Should use UIFlexMode enum, not FlexMode
         let items_from_override = get_enum_variant_completions("UIFlexMode");
@@ -1456,42 +1450,38 @@ mod tests {
 
     #[test]
     fn enum_shorthand_scale_type_on_image_label() {
-        let items = get_enum_shorthand_completions(
-            &vec!["ImageLabel".to_string()],
-            "ScaleType",
+        let items = get_enum_shorthand_completions(&vec!["ImageLabel".to_string()], "ScaleType");
+        assert!(
+            !items.is_empty(),
+            "ScaleType enum shorthand should return variants for ImageLabel"
         );
-        assert!(!items.is_empty(), "ScaleType enum shorthand should return variants for ImageLabel");
     }
 
     #[test]
     fn enum_shorthand_non_enum_property_returns_empty() {
-        let items = get_enum_shorthand_completions(
-            &vec!["Frame".to_string()],
-            "Size",
-        );
+        let items = get_enum_shorthand_completions(&vec!["Frame".to_string()], "Size");
         assert!(items.is_empty());
     }
 
     #[test]
     fn enum_shorthand_unknown_property_returns_empty() {
-        let items = get_enum_shorthand_completions(
-            &vec!["Frame".to_string()],
-            "NotARealProperty",
-        );
+        let items = get_enum_shorthand_completions(&vec!["Frame".to_string()], "NotARealProperty");
         assert!(items.is_empty());
     }
 
     async fn typecheck_and_get_definitions(source: &str) -> Document {
-        use crate::typechecker::Typechecker;
-        use crate::parser::Parser;
-        use crate::lexer::Lexer;
+        use rbx_rsml::lexer::Lexer;
+        use rbx_rsml::parser::Parser;
+        use rbx_rsml::typechecker::Typechecker;
         use std::path::PathBuf;
 
         let lexer = Lexer::new(source);
         let parsed = Parser::new(lexer);
-        let mut document = Document::new(source.to_string());
         let dummy_path = PathBuf::from("/test.rsml");
-        Typechecker::new(parsed, &dummy_path, None, &mut document).await;
+        let data = Typechecker::new(&parsed, &dummy_path, None).await;
+        let mut document = Document::new(source.to_string());
+        document.dependencies = data.dependencies;
+        document.definitions = data.definitions;
         document
     }
 
@@ -1507,11 +1497,18 @@ mod tests {
             let entry = document.definitions.get_key_value(&byte_pos);
             assert!(entry.is_some(), "should have entry at byte {}", byte_pos);
             match entry.unwrap().1 {
-                DefinitionKind::Assignment { property_name, type_definition } => {
+                DefinitionKind::Assignment {
+                    property_name,
+                    type_definition,
+                } => {
                     assert_eq!(property_name, "ScaleType");
                     assert!(type_definition.contains(&"ImageLabel".to_string()));
                 }
-                other => panic!("expected Assignment at byte {}, got {:?}", byte_pos, std::mem::discriminant(other)),
+                other => panic!(
+                    "expected Assignment at byte {}, got {:?}",
+                    byte_pos,
+                    std::mem::discriminant(other)
+                ),
             }
         }
     }
@@ -1523,9 +1520,16 @@ mod tests {
 
         let dot_pos = source.find("Enum.").unwrap() + 5;
         let entry = document.definitions.get_key_value(&dot_pos);
-        assert!(entry.is_some(), "should have entry at byte {} (after 'Enum.')", dot_pos);
-        assert!(matches!(entry.unwrap().1, DefinitionKind::EnumName),
-            "expected EnumName at byte {}", dot_pos);
+        assert!(
+            entry.is_some(),
+            "should have entry at byte {} (after 'Enum.')",
+            dot_pos
+        );
+        assert!(
+            matches!(entry.unwrap().1, DefinitionKind::EnumName),
+            "expected EnumName at byte {}",
+            dot_pos
+        );
     }
 
     #[tokio::test]
@@ -1535,9 +1539,16 @@ mod tests {
 
         let colon_pos = source.find("Enum:").unwrap() + 5;
         let entry = document.definitions.get_key_value(&colon_pos);
-        assert!(entry.is_some(), "should have entry at byte {} (after 'Enum:')", colon_pos);
-        assert!(matches!(entry.unwrap().1, DefinitionKind::EnumName),
-            "expected EnumName at byte {}", colon_pos);
+        assert!(
+            entry.is_some(),
+            "should have entry at byte {} (after 'Enum:')",
+            colon_pos
+        );
+        assert!(
+            matches!(entry.unwrap().1, DefinitionKind::EnumName),
+            "expected EnumName at byte {}",
+            colon_pos
+        );
     }
 
     #[tokio::test]
@@ -1547,12 +1558,20 @@ mod tests {
 
         let trailing_dot = source.find("AutomaticSize.").unwrap() + 14;
         let entry = document.definitions.get_key_value(&trailing_dot);
-        assert!(entry.is_some(), "should have entry at byte {} (after 'Enum.AutomaticSize.')", trailing_dot);
+        assert!(
+            entry.is_some(),
+            "should have entry at byte {} (after 'Enum.AutomaticSize.')",
+            trailing_dot
+        );
         match entry.unwrap().1 {
             DefinitionKind::EnumVariant { enum_name } => {
                 assert_eq!(enum_name, "AutomaticSize");
             }
-            other => panic!("expected EnumVariant at byte {}, got {:?}", trailing_dot, std::mem::discriminant(other)),
+            other => panic!(
+                "expected EnumVariant at byte {}, got {:?}",
+                trailing_dot,
+                std::mem::discriminant(other)
+            ),
         }
     }
 
@@ -1563,12 +1582,20 @@ mod tests {
 
         let trailing_colon = source.rfind(':').unwrap() + 1;
         let entry = document.definitions.get_key_value(&trailing_colon);
-        assert!(entry.is_some(), "should have entry at byte {} (after 'Enum:AutomaticSize:')", trailing_colon);
+        assert!(
+            entry.is_some(),
+            "should have entry at byte {} (after 'Enum:AutomaticSize:')",
+            trailing_colon
+        );
         match entry.unwrap().1 {
             DefinitionKind::EnumVariant { enum_name } => {
                 assert_eq!(enum_name, "AutomaticSize");
             }
-            other => panic!("expected EnumVariant at byte {}, got {:?}", trailing_colon, std::mem::discriminant(other)),
+            other => panic!(
+                "expected EnumVariant at byte {}, got {:?}",
+                trailing_colon,
+                std::mem::discriminant(other)
+            ),
         }
     }
 
@@ -1579,11 +1606,21 @@ mod tests {
 
         let after_equals = source.find("= ").unwrap() + 2;
         let entry = document.definitions.get_key_value(&after_equals);
-        assert!(entry.is_some(), "should have entry at byte {}", after_equals);
+        assert!(
+            entry.is_some(),
+            "should have entry at byte {}",
+            after_equals
+        );
         match entry.unwrap().1 {
-            DefinitionKind::Assignment { property_name, type_definition } => {
+            DefinitionKind::Assignment {
+                property_name,
+                type_definition,
+            } => {
                 let items = get_enum_shorthand_completions(type_definition, property_name);
-                assert!(items.is_empty(), "Size is not an enum, should return empty completions");
+                assert!(
+                    items.is_empty(),
+                    "Size is not an enum, should return empty completions"
+                );
             }
             _ => (),
         }
@@ -1596,12 +1633,18 @@ mod tests {
 
         let colon_pos = source.rfind(":Linear").unwrap();
         let entry = document.definitions.get_key_value(&colon_pos);
-        assert!(entry.is_some(), "should have EnumVariant entry at tween arg 1");
+        assert!(
+            entry.is_some(),
+            "should have EnumVariant entry at tween arg 1"
+        );
         match entry.unwrap().1 {
             DefinitionKind::EnumVariant { enum_name } => {
                 assert_eq!(enum_name, "EasingStyle");
             }
-            other => panic!("expected EnumVariant at tween arg 1, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected EnumVariant at tween arg 1, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
     }
 
@@ -1612,12 +1655,18 @@ mod tests {
 
         let colon_pos = source.rfind(":InOut").unwrap();
         let entry = document.definitions.get_key_value(&colon_pos);
-        assert!(entry.is_some(), "should have EnumVariant entry at tween arg 2");
+        assert!(
+            entry.is_some(),
+            "should have EnumVariant entry at tween arg 2"
+        );
         match entry.unwrap().1 {
             DefinitionKind::EnumVariant { enum_name } => {
                 assert_eq!(enum_name, "EasingDirection");
             }
-            other => panic!("expected EnumVariant at tween arg 2, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected EnumVariant at tween arg 2, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
     }
 
@@ -1634,7 +1683,10 @@ mod tests {
             DefinitionKind::FilteredEnumName { enum_name } => {
                 assert_eq!(enum_name, "EasingStyle");
             }
-            other => panic!("expected FilteredEnumName, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected FilteredEnumName, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
 
         // After "EasingStyle" should show variants
@@ -1645,7 +1697,10 @@ mod tests {
             DefinitionKind::EnumVariant { enum_name } => {
                 assert_eq!(enum_name, "EasingStyle");
             }
-            other => panic!("expected EnumVariant, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected EnumVariant, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
     }
 
@@ -1662,7 +1717,10 @@ mod tests {
             DefinitionKind::FilteredEnumName { enum_name } => {
                 assert_eq!(enum_name, "EasingDirection");
             }
-            other => panic!("expected FilteredEnumName, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected FilteredEnumName, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
 
         // After "EasingDirection" should show variants
@@ -1673,7 +1731,10 @@ mod tests {
             DefinitionKind::EnumVariant { enum_name } => {
                 assert_eq!(enum_name, "EasingDirection");
             }
-            other => panic!("expected EnumVariant, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected EnumVariant, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
     }
 
@@ -1684,9 +1745,14 @@ mod tests {
 
         let derive_pos = source.find("@derive").unwrap();
         let entry = document.definitions.get_key_value(&derive_pos);
-        assert!(entry.is_some(), "should have definition at @derive position");
-        assert!(!matches!(entry.unwrap().1, DefinitionKind::Scope { .. }),
-            "declaration should override parent Scope");
+        assert!(
+            entry.is_some(),
+            "should have definition at @derive position"
+        );
+        assert!(
+            !matches!(entry.unwrap().1, DefinitionKind::Scope { .. }),
+            "declaration should override parent Scope"
+        );
     }
 
     #[tokio::test]
@@ -1696,9 +1762,14 @@ mod tests {
 
         let priority_pos = source.find("@priority").unwrap();
         let entry = document.definitions.get_key_value(&priority_pos);
-        assert!(entry.is_some(), "should have definition at @priority position");
-        assert!(matches!(entry.unwrap().1, DefinitionKind::Declaration),
-            "expected Declaration at @priority");
+        assert!(
+            entry.is_some(),
+            "should have definition at @priority position"
+        );
+        assert!(
+            matches!(entry.unwrap().1, DefinitionKind::Declaration),
+            "expected Declaration at @priority"
+        );
     }
 
     #[tokio::test]
@@ -1709,8 +1780,10 @@ mod tests {
         let name_pos = source.find("@name").unwrap();
         let entry = document.definitions.get_key_value(&name_pos);
         assert!(entry.is_some(), "should have definition at @name position");
-        assert!(matches!(entry.unwrap().1, DefinitionKind::Declaration),
-            "expected Declaration at @name");
+        assert!(
+            matches!(entry.unwrap().1, DefinitionKind::Declaration),
+            "expected Declaration at @name"
+        );
     }
 
     #[tokio::test]
@@ -1720,9 +1793,14 @@ mod tests {
 
         let colon_pos = source.find(":Linear").unwrap();
         let entry = document.definitions.get_key_value(&colon_pos);
-        assert!(entry.is_some(), "should have definition at tween arg position");
-        assert!(!matches!(entry.unwrap().1, DefinitionKind::Scope { .. }),
-            "tween arg should override parent Scope");
+        assert!(
+            entry.is_some(),
+            "should have definition at tween arg position"
+        );
+        assert!(
+            !matches!(entry.unwrap().1, DefinitionKind::Scope { .. }),
+            "tween arg should override parent Scope"
+        );
     }
 
     #[tokio::test]
@@ -1733,8 +1811,10 @@ mod tests {
         let macro_pos = source.find("@macro").unwrap();
         let entry = document.definitions.get_key_value(&macro_pos);
         assert!(entry.is_some(), "should have definition at @macro position");
-        assert!(matches!(entry.unwrap().1, DefinitionKind::Declaration),
-            "expected Declaration at @macro header");
+        assert!(
+            matches!(entry.unwrap().1, DefinitionKind::Declaration),
+            "expected Declaration at @macro header"
+        );
     }
 
     #[tokio::test]
@@ -1745,8 +1825,10 @@ mod tests {
         let size_pos = source.find("Size").unwrap();
         let entry = document.definitions.get_key_value(&size_pos);
         assert!(entry.is_some(), "should have definition inside macro body");
-        assert!(!matches!(entry.unwrap().1, DefinitionKind::Declaration),
-            "macro body should not be Declaration — it needs its own completions");
+        assert!(
+            !matches!(entry.unwrap().1, DefinitionKind::Declaration),
+            "macro body should not be Declaration — it needs its own completions"
+        );
     }
 
     // ── Tween completion behavior ─────────────────────────────────
@@ -1765,7 +1847,10 @@ mod tests {
                 let items = get_enum_variant_completions(enum_name);
                 assert!(items.iter().any(|item| item.label == "Linear"));
             }
-            other => panic!("expected EnumVariant, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected EnumVariant, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
     }
 
@@ -1783,7 +1868,10 @@ mod tests {
                 let items = get_enum_variant_completions(enum_name);
                 assert!(items.iter().any(|item| item.label == "InOut"));
             }
-            other => panic!("expected EnumVariant, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected EnumVariant, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
     }
 
@@ -1800,7 +1888,10 @@ mod tests {
             DefinitionKind::FilteredEnumName { enum_name } => {
                 assert_eq!(enum_name, "EasingStyle");
             }
-            other => panic!("expected FilteredEnumName, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected FilteredEnumName, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
     }
 
@@ -1816,7 +1907,10 @@ mod tests {
             DefinitionKind::FilteredEnumName { enum_name } => {
                 assert_eq!(enum_name, "EasingDirection");
             }
-            other => panic!("expected FilteredEnumName, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected FilteredEnumName, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
     }
 
@@ -1833,7 +1927,10 @@ mod tests {
             DefinitionKind::EnumVariant { enum_name } => {
                 assert_eq!(enum_name, "EasingStyle");
             }
-            other => panic!("expected EnumVariant, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "expected EnumVariant, got {:?}",
+                std::mem::discriminant(other)
+            ),
         }
     }
 }

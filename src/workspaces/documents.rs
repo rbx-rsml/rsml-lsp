@@ -2,7 +2,7 @@ use std::{collections::HashMap, ops::{Deref, DerefMut}, path::PathBuf, sync::Arc
 
 use tokio::sync::Mutex;
 
-use crate::workspaces::Document;
+use super::Document;
 
 pub struct Documents(HashMap<PathBuf, Arc<Mutex<Document>>>);
 

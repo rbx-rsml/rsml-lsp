@@ -1,11 +1,12 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::collections::HashSet;
+use std::path::PathBuf;
 
-use crate::typechecker::Definitions;
+use rbx_rsml::typechecker::Definitions;
 
 pub struct Document {
     pub source: String,
     pub dependencies: HashSet<PathBuf>,
-    pub definitions: Definitions
+    pub definitions: Definitions,
 }
 
 impl Document {
@@ -13,7 +14,7 @@ impl Document {
         Self {
             source,
             dependencies: HashSet::new(),
-            definitions: Definitions::new()
+            definitions: Definitions::new(),
         }
     }
 }

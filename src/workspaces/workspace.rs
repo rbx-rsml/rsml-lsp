@@ -1,4 +1,4 @@
-use crate::luaurc::Luaurc;
+use rbx_rsml::typechecker::luaurc::Luaurc;
 
 #[derive(Debug)]
 pub struct Workspace {
