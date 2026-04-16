@@ -2,10 +2,7 @@ use rbx_rsml::lexer::Token;
 use rbx_rsml::parser::{Construct, Delimited};
 use rbx_rsml::typechecker::{DefinitionKind, Definitions};
 
-pub fn build_rule_body_definitions(
-    body: &Option<Delimited<'_>>,
-    definitions: &mut Definitions,
-) {
+pub fn build_rule_body_definitions(body: &Option<Delimited<'_>>, definitions: &mut Definitions) {
     let Some(body) = body.as_ref() else { return };
     let Some(content) = body.content.as_ref() else {
         return;
@@ -70,10 +67,8 @@ pub fn build_rule_body_definitions(
                             .map(|node| node.token.end())
                             .unwrap_or(assign_end);
 
-                        definitions.insert(
-                            name_range_start..=name_range_end,
-                            DefinitionKind::EnumName,
-                        );
+                        definitions
+                            .insert(name_range_start..=name_range_end, DefinitionKind::EnumName);
 
                         if let Some(name_node) = name {
                             let enum_name = match name_node.token.value() {
@@ -109,9 +104,7 @@ pub fn build_rule_body_definitions(
                 super::tween::build_tween_definitions(body, definitions);
             }
 
-            Construct::Derive { .. }
-            | Construct::Priority { .. }
-            | Construct::Name { .. } => {
+            Construct::Derive { .. } | Construct::Priority { .. } => {
                 let span = construct.span();
                 definitions.insert(span.0..=span.1, DefinitionKind::Declaration);
             }
