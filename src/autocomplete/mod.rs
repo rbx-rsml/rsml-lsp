@@ -6,6 +6,7 @@ use rbx_rsml::typechecker::luaurc::Luaurc;
 
 mod normalize_path;
 pub mod selectors;
+pub mod tokens;
 pub mod tween;
 pub mod derive;
 
@@ -39,6 +40,12 @@ pub fn build_definitions(
                 let span = construct.span();
                 definitions.insert(span.0..=span.1, DefinitionKind::Declaration);
                 tween::build_tween_definitions(body, definitions);
+            }
+
+            Construct::Assignment {
+                right: Some(right), ..
+            } => {
+                tokens::walk_construct(right, definitions);
             }
 
             _ => (),

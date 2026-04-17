@@ -1079,6 +1079,7 @@ dependencies = [
  "rbx-rsml",
  "rbx_reflection",
  "rbx_reflection_database",
+ "rbx_types 2.0.0",
  "ropey",
  "serde",
  "serde_json",

@@ -55,6 +55,7 @@ pub fn build_rule_body_definitions(body: &Option<Delimited<'_>>, definitions: &m
                 );
 
                 let Some(right) = right else { continue };
+                super::tokens::walk_construct(right, definitions);
                 match right.as_ref() {
                     Construct::Enum {
                         keyword,

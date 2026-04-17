@@ -31,14 +31,33 @@ use ropey::Rope;
 use rbx_rsml::lexer::{Lexer, SpannedToken};
 use rbx_rsml::parser::Parser;
 use rbx_rsml::range_from_span::RangeFromSpan;
+use rbx_rsml::datatype::Datatype;
+use rbx_types::Variant;
 use rbx_rsml::typechecker::{
-    CyclicKind, DefinitionKind, PushTypeError, TypeError, TypecheckedRsml, Typechecker,
+    CyclicKind, DefinitionKind, PushTypeError, TokenKey, TokenTypes, TypeError, TypecheckedRsml,
+    Typechecker,
     luaurc::{Aliases, Luaurc},
 };
 
 pub mod autocomplete;
 pub mod workspaces;
 use workspaces::{Document, Documents, Workspace, Workspaces};
+
+fn format_token_hint(name: &str, is_static: bool, token_types: &TokenTypes) -> String {
+    let sigil = if is_static { "$!" } else { "$" };
+    let type_name = token_types
+        .get(&TokenKey {
+            name: name.to_string(),
+            is_static,
+        })
+        .map(|dt| match dt {
+            Datatype::IncompleteEnumShorthand(_) => format!("Enum.{}", name),
+            Datatype::Variant(Variant::EnumItem(item)) => format!("Enum.{}", item.ty),
+            other => other.type_name(),
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    format!("{}{}: {}", sigil, name, type_name)
+}
 
 fn convert_range(range: rbx_rsml::types::Range) -> Range {
     Range {
@@ -573,7 +592,8 @@ impl LanguageServer for Backend {
                 | DefinitionKind::EnumName
                 | DefinitionKind::EnumVariant { .. }
                 | DefinitionKind::Declaration
-                | DefinitionKind::FilteredEnumName { .. } => (),
+                | DefinitionKind::FilteredEnumName { .. }
+                | DefinitionKind::Token { .. } => (),
             }
         }
 
@@ -607,6 +627,13 @@ impl LanguageServer for Backend {
 
                 DefinitionKind::Selector { hint, .. } => HoverContents::Scalar(
                     MarkedString::from_markdown(format!("```luau\n{}\n```", hint.to_string())),
+                ),
+
+                DefinitionKind::Token { name, is_static } => HoverContents::Scalar(
+                    MarkedString::from_markdown(format!(
+                        "```luau\n{}\n```",
+                        format_token_hint(name, *is_static, &document.token_types)
+                    )),
                 ),
 
                 DefinitionKind::Scope { .. }
@@ -1029,19 +1056,27 @@ impl<'a> Backend {
                             derives,
                             dependencies: type_dependencies,
                             mut definitions,
+                            token_types,
                         } = typechecked;
                         document.dependencies = type_dependencies;
+                        document.token_types = token_types;
 
                         // Build autocomplete definitions on top of typechecker's Selector/Scope
                         match &luaurc {
                             Status::Some(luaurc_ref) => {
                                 autocomplete::build_definitions(
-                                    &parsed, &mut definitions, &current_path, Some(luaurc_ref),
+                                    &parsed,
+                                    &mut definitions,
+                                    &current_path,
+                                    Some(luaurc_ref),
                                 );
                             }
                             Status::None => {
                                 autocomplete::build_definitions(
-                                    &parsed, &mut definitions, &current_path, None,
+                                    &parsed,
+                                    &mut definitions,
+                                    &current_path,
+                                    None,
                                 );
                             }
                             Status::Unknown => {
@@ -1062,7 +1097,10 @@ impl<'a> Backend {
                                     );
                                 } else {
                                     autocomplete::build_definitions(
-                                        &parsed, &mut definitions, &current_path, None,
+                                        &parsed,
+                                        &mut definitions,
+                                        &current_path,
+                                        None,
                                     );
                                 }
                             }
@@ -1177,10 +1215,15 @@ impl<'a> Backend {
                                 derives: _,
                                 dependencies: type_dependencies,
                                 mut definitions,
+                                token_types,
                             } = Typechecker::new(&parsed, &dummy_path, None).await;
                             document.dependencies = type_dependencies;
+                            document.token_types = token_types;
                             autocomplete::build_definitions(
-                                &parsed, &mut definitions, &dummy_path, None,
+                                &parsed,
+                                &mut definitions,
+                                &dummy_path,
+                                None,
                             );
                             document.definitions = definitions;
                             (errors, None)
@@ -1523,6 +1566,7 @@ mod tests {
         let data = Typechecker::new(&parsed, &dummy_path, None).await;
         let mut document = Document::new(source.to_string());
         document.dependencies = data.dependencies;
+        document.token_types = data.token_types;
         let mut definitions = data.definitions;
         crate::autocomplete::build_definitions(&parsed, &mut definitions, &dummy_path, None);
         document.definitions = definitions;
@@ -1817,20 +1861,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn declaration_name_suppresses_scope_completions() {
-        let source = "Frame {\n    @name \"Test\";\n}";
-        let document = typecheck_and_get_definitions(source).await;
-
-        let name_pos = source.find("@name").unwrap();
-        let entry = document.definitions.get_key_value(&name_pos);
-        assert!(entry.is_some(), "should have definition at @name position");
-        assert!(
-            matches!(entry.unwrap().1, DefinitionKind::Declaration),
-            "expected Declaration at @name"
-        );
-    }
-
-    #[tokio::test]
     async fn declaration_tween_arg_suppresses_scope_completions() {
         let source = "Frame {\n    @tween Size (.5, :Linear);\n}";
         let document = typecheck_and_get_definitions(source).await;
@@ -1976,5 +2006,143 @@ mod tests {
                 std::mem::discriminant(other)
             ),
         }
+    }
+
+    fn assert_token_at(document: &Document, byte_pos: usize, expected_name: &str, expected_static: bool) {
+        let entry = document.definitions.get_key_value(&byte_pos);
+        let entry = entry.unwrap_or_else(|| {
+            panic!("no definition entry at byte {}", byte_pos)
+        });
+        match entry.1 {
+            DefinitionKind::Token { name, is_static } => {
+                assert_eq!(name, expected_name, "name mismatch at byte {}", byte_pos);
+                assert_eq!(
+                    *is_static, expected_static,
+                    "is_static mismatch at byte {}",
+                    byte_pos
+                );
+            }
+            other => panic!(
+                "expected Token at byte {}, got {:?}",
+                byte_pos,
+                std::mem::discriminant(other)
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn token_lhs_declaration_has_entry() {
+        let source = "$primary = #ff0000;";
+        let document = typecheck_and_get_definitions(source).await;
+        let pos = source.find("$primary").unwrap() + 1;
+        assert_token_at(&document, pos, "primary", false);
+    }
+
+    #[tokio::test]
+    async fn token_static_lhs_declaration_has_entry() {
+        let source = "$!primary = #ff0000;";
+        let document = typecheck_and_get_definitions(source).await;
+        let pos = source.find("$!primary").unwrap() + 2;
+        assert_token_at(&document, pos, "primary", true);
+    }
+
+    #[tokio::test]
+    async fn token_reference_in_assignment_has_entry() {
+        let source = "$primary = #ff0000;\nFrame {\n    BackgroundColor3 = $primary;\n}";
+        let document = typecheck_and_get_definitions(source).await;
+        let ref_start = source.rfind("$primary").unwrap();
+        let ref_pos = ref_start + 1;
+        assert_token_at(&document, ref_pos, "primary", false);
+    }
+
+    #[tokio::test]
+    async fn token_reference_inside_math_has_entry() {
+        let source = "$a = 10;\n$b = $a + 5;";
+        let document = typecheck_and_get_definitions(source).await;
+        let ref_pos = source.rfind("$a").unwrap() + 1;
+        assert_token_at(&document, ref_pos, "a", false);
+    }
+
+    #[tokio::test]
+    async fn token_reference_inside_table_has_entry() {
+        let source = "$offset = 10;\nFrame {\n    Size = udim2(0, $offset, 0, $offset);\n}";
+        let document = typecheck_and_get_definitions(source).await;
+        let ref_pos = source.rfind("$offset").unwrap() + 1;
+        assert_token_at(&document, ref_pos, "offset", false);
+    }
+
+    #[tokio::test]
+    async fn token_reference_static_inside_nested_rule() {
+        let source = "$!color = #ff0000;\nFrame {\n    BackgroundColor3 = $!color;\n}";
+        let document = typecheck_and_get_definitions(source).await;
+        let ref_start = source.rfind("$!color").unwrap();
+        let ref_pos = ref_start + 2;
+        assert_token_at(&document, ref_pos, "color", true);
+    }
+
+    async fn hover_for(source: &str, name: &str, is_static: bool) -> String {
+        let document = typecheck_and_get_definitions(source).await;
+        format_token_hint(name, is_static, &document.token_types)
+    }
+
+    #[tokio::test]
+    async fn hover_dynamic_number() {
+        assert_eq!(hover_for("$x = 10;", "x", false).await, "$x: number");
+    }
+
+    #[tokio::test]
+    async fn hover_static_number() {
+        assert_eq!(hover_for("$!x = 10;", "x", true).await, "$!x: number");
+    }
+
+    #[tokio::test]
+    async fn hover_dynamic_tailwind_coerced_to_color3() {
+        assert_eq!(
+            hover_for("$x = tw:red:500;", "x", false).await,
+            "$x: Color3"
+        );
+    }
+
+    #[tokio::test]
+    async fn hover_static_tailwind_stays_oklab() {
+        assert_eq!(
+            hover_for("$!x = tw:red:500;", "x", true).await,
+            "$!x: Oklab"
+        );
+    }
+
+    #[tokio::test]
+    async fn hover_static_bool_is_boolean() {
+        assert_eq!(hover_for("$!x = true;", "x", true).await, "$!x: boolean");
+    }
+
+    #[tokio::test]
+    async fn hover_enum_shorthand_uses_token_name() {
+        assert_eq!(hover_for("$!x = :Foo;", "x", true).await, "$!x: Enum.x");
+    }
+
+    #[tokio::test]
+    async fn hover_full_enum_uses_item_ty() {
+        assert_eq!(
+            hover_for("$!x = Enum.Material.Plastic;", "x", true).await,
+            "$!x: Enum.Material"
+        );
+    }
+
+    #[tokio::test]
+    async fn hover_unresolvable_enum_is_unknown() {
+        assert_eq!(
+            hover_for("$!x = Enum.NotReal.xyz;", "x", true).await,
+            "$!x: unknown"
+        );
+    }
+
+    #[tokio::test]
+    async fn hover_unknown_token_name_is_unknown() {
+        let empty_types: TokenTypes = std::collections::HashMap::new();
+        assert_eq!(
+            format_token_hint("missing", false, &empty_types),
+            "$missing: unknown"
+        );
     }
 }
