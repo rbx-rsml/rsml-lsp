@@ -34,8 +34,8 @@ use rbx_rsml::range_from_span::RangeFromSpan;
 use rbx_rsml::datatype::Datatype;
 use rbx_types::Variant;
 use rbx_rsml::typechecker::{
-    CyclicKind, DefinitionKind, PushTypeError, TokenKey, TokenTypes, TypeError, TypecheckedRsml,
-    Typechecker,
+    CyclicKind, DefinitionKind, PushTypeError, ResolvedTypeKey, ResolvedTypes, TypeError,
+    TypecheckedRsml, Typechecker,
     luaurc::{Aliases, Luaurc},
 };
 
@@ -43,10 +43,10 @@ pub mod autocomplete;
 pub mod workspaces;
 use workspaces::{Document, Documents, Workspace, Workspaces};
 
-fn format_token_hint(name: &str, is_static: bool, token_types: &TokenTypes) -> String {
+fn format_token_hint(name: &str, is_static: bool, resolved_types: &ResolvedTypes) -> String {
     let sigil = if is_static { "$!" } else { "$" };
-    let type_name = token_types
-        .get(&TokenKey {
+    let type_name = resolved_types
+        .get(&ResolvedTypeKey::Token {
             name: name.to_string(),
             is_static,
         })
@@ -632,12 +632,33 @@ impl LanguageServer for Backend {
                 DefinitionKind::Token { name, is_static } => HoverContents::Scalar(
                     MarkedString::from_markdown(format!(
                         "```luau\n{}\n```",
-                        format_token_hint(name, *is_static, &document.token_types)
+                        format_token_hint(name, *is_static, &document.resolved_types)
                     )),
                 ),
 
+                DefinitionKind::Assignment { property_name, .. } => {
+                    let resolved = document
+                        .resolved_types
+                        .get(&ResolvedTypeKey::Property {
+                            start: *span.start(),
+                        })
+                        .map(|dt| match dt {
+                            Datatype::IncompleteEnumShorthand(_) => {
+                                format!("Enum.{}", property_name)
+                            }
+                            Datatype::Variant(Variant::EnumItem(item)) => {
+                                format!("Enum.{}", item.ty)
+                            }
+                            other => other.type_name(),
+                        })
+                        .unwrap_or_else(|| "unknown".to_string());
+                    HoverContents::Scalar(MarkedString::from_markdown(format!(
+                        "```luau\n{}: {}\n```",
+                        property_name, resolved,
+                    )))
+                }
+
                 DefinitionKind::Scope { .. }
-                | DefinitionKind::Assignment { .. }
                 | DefinitionKind::EnumName
                 | DefinitionKind::EnumVariant { .. }
                 | DefinitionKind::Declaration
@@ -1056,10 +1077,10 @@ impl<'a> Backend {
                             derives,
                             dependencies: type_dependencies,
                             mut definitions,
-                            token_types,
+                            resolved_types,
                         } = typechecked;
                         document.dependencies = type_dependencies;
-                        document.token_types = token_types;
+                        document.resolved_types = resolved_types;
 
                         // Build autocomplete definitions on top of typechecker's Selector/Scope
                         match &luaurc {
@@ -1215,10 +1236,10 @@ impl<'a> Backend {
                                 derives: _,
                                 dependencies: type_dependencies,
                                 mut definitions,
-                                token_types,
+                                resolved_types,
                             } = Typechecker::new(&parsed, &dummy_path, None).await;
                             document.dependencies = type_dependencies;
-                            document.token_types = token_types;
+                            document.resolved_types = resolved_types;
                             autocomplete::build_definitions(
                                 &parsed,
                                 &mut definitions,
@@ -1566,7 +1587,7 @@ mod tests {
         let data = Typechecker::new(&parsed, &dummy_path, None).await;
         let mut document = Document::new(source.to_string());
         document.dependencies = data.dependencies;
-        document.token_types = data.token_types;
+        document.resolved_types = data.resolved_types;
         let mut definitions = data.definitions;
         crate::autocomplete::build_definitions(&parsed, &mut definitions, &dummy_path, None);
         document.definitions = definitions;
@@ -2082,7 +2103,7 @@ mod tests {
 
     async fn hover_for(source: &str, name: &str, is_static: bool) -> String {
         let document = typecheck_and_get_definitions(source).await;
-        format_token_hint(name, is_static, &document.token_types)
+        format_token_hint(name, is_static, &document.resolved_types)
     }
 
     #[tokio::test]
@@ -2118,7 +2139,10 @@ mod tests {
 
     #[tokio::test]
     async fn hover_enum_shorthand_uses_token_name() {
-        assert_eq!(hover_for("$!x = :Foo;", "x", true).await, "$!x: Enum.x");
+        assert_eq!(
+            hover_for("$!ScaleType = :Fit;", "ScaleType", true).await,
+            "$!ScaleType: Enum.ScaleType"
+        );
     }
 
     #[tokio::test]
@@ -2139,7 +2163,7 @@ mod tests {
 
     #[tokio::test]
     async fn hover_unknown_token_name_is_unknown() {
-        let empty_types: TokenTypes = std::collections::HashMap::new();
+        let empty_types: ResolvedTypes = std::collections::HashMap::new();
         assert_eq!(
             format_token_hint("missing", false, &empty_types),
             "$missing: unknown"
