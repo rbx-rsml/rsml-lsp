@@ -14,6 +14,7 @@ fn resolve_derive_path(
 ) -> PathBuf {
     let path = 'core: {
         let derived_path = PathBuf::from(content.trim()).normalize();
+
         let Some(luaurc) = luaurc else {
             break 'core derived_path;
         };
@@ -23,6 +24,7 @@ fn resolve_derive_path(
         let Some(component) = components.next() else {
             break 'core derived_path;
         };
+
         let component_str = component.as_os_str().to_string_lossy();
 
         if component_str.starts_with("@") {

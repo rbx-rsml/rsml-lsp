@@ -88,19 +88,18 @@ pub fn build_tween_definitions(body: &Construct<'_>, definitions: &mut Definitio
     };
 
     let args: Vec<&Construct<'_>> = items.iter().filter(|item| !is_comma(item)).collect();
+
     if args.is_empty() {
         return;
     }
 
     let tuple_end = body.span().1;
 
-    // Arg 1: optional EasingStyle enum
     if let Some(arg) = args.get(1) {
         let slot_end = args.get(2).map(|a| a.span().0).unwrap_or(tuple_end);
         register_enum_arg_definitions(arg, "EasingStyle", slot_end, definitions);
     }
 
-    // Arg 2: optional EasingDirection enum
     if let Some(arg) = args.get(2) {
         register_enum_arg_definitions(arg, "EasingDirection", tuple_end, definitions);
     }

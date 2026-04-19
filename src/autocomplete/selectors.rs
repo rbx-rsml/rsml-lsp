@@ -4,13 +4,15 @@ use rbx_rsml::typechecker::{DefinitionKind, Definitions};
 
 pub fn build_rule_body_definitions(body: &Option<Delimited<'_>>, definitions: &mut Definitions) {
     let Some(body) = body.as_ref() else { return };
+
     let Some(content) = body.content.as_ref() else {
         return;
     };
 
-    // Look up the Scope from the body range to get type_definition.
-    // The typechecker already inserted Scope definitions for each rule body.
+    // The typechecker already inserted a `Scope` definition for each rule body, so
+    // we look it up by body start to recover the scope's type definition.
     let body_start = body.left.token.start();
+
     let current_classes = definitions
         .get(&body_start)
         .and_then(|kind| {
@@ -37,6 +39,7 @@ pub fn build_rule_body_definitions(body: &Option<Delimited<'_>>, definitions: &m
                 let Token::Identifier(property_name) = left.token.value() else {
                     continue;
                 };
+
                 let Some(middle) = middle else { continue };
 
                 let assign_start = middle.token.start();
@@ -55,7 +58,9 @@ pub fn build_rule_body_definitions(body: &Option<Delimited<'_>>, definitions: &m
                 );
 
                 let Some(right) = right else { continue };
+
                 super::tokens::walk_construct(right, definitions);
+
                 match right.as_ref() {
                     Construct::Enum {
                         keyword,

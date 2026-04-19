@@ -28,8 +28,8 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use ropey::Rope;
 
-use rbx_rsml::lexer::{Lexer, SpannedToken};
-use rbx_rsml::parser::Parser;
+use rbx_rsml::lexer::{RsmlLexer, SpannedToken};
+use rbx_rsml::parser::RsmlParser;
 use rbx_rsml::range_from_span::RangeFromSpan;
 use rbx_rsml::datatype::Datatype;
 use rbx_types::Variant;
@@ -540,9 +540,11 @@ impl LanguageServer for Backend {
         };
 
         let documents = self.documents.lock().await;
+
         let Some(document_mutex) = documents.get(&current_path) else {
             return Ok(None);
         };
+
         let document_mutex = document_mutex.clone();
         let document = document_mutex.lock().await;
 
@@ -609,9 +611,11 @@ impl LanguageServer for Backend {
         };
 
         let documents = self.documents.lock().await;
+
         let Some(document_mutex) = documents.get(&current_path) else {
             return Ok(None);
         };
+
         let document_mutex = document_mutex.clone();
         let document = document_mutex.lock().await;
 
@@ -686,9 +690,11 @@ impl LanguageServer for Backend {
         };
 
         let documents = self.documents.lock().await;
+
         let Some(document_mutex) = documents.get(&current_path) else {
             return Ok(None);
         };
+
         let document_mutex = document_mutex.clone();
         let document = document_mutex.lock().await;
 
@@ -1024,7 +1030,7 @@ impl<'a> Backend {
             let (diagnostics, current_path) = if source_code.len() == 0 {
                 (vec![], None)
             } else {
-                let parsed = Parser::new(Lexer::new(source_code));
+                let parsed = RsmlParser::new(RsmlLexer::new(source_code));
 
                 let uri_file_path = uri.to_file_path();
 
@@ -1372,10 +1378,10 @@ async fn watch() {
 async fn test() {
     let contents = fs::read_to_string("./test/test.rsml").await.unwrap();
 
-    let lexed = Lexer::new(&contents);
+    let lexed = RsmlLexer::new(&contents);
     println!("{:#?}", lexed.collect::<Vec<SpannedToken>>());
 
-    let parsed = Parser::new(Lexer::new(&contents));
+    let parsed = RsmlParser::new(RsmlLexer::new(&contents));
 
     let typechecked = Typechecker::new(&parsed, &PathBuf::from("/"), None).await;
 
@@ -1576,13 +1582,13 @@ mod tests {
     }
 
     async fn typecheck_and_get_definitions(source: &str) -> Document {
-        use rbx_rsml::lexer::Lexer;
-        use rbx_rsml::parser::Parser;
+        use rbx_rsml::lexer::RsmlLexer;
+        use rbx_rsml::parser::RsmlParser;
         use rbx_rsml::typechecker::Typechecker;
         use std::path::PathBuf;
 
-        let lexer = Lexer::new(source);
-        let parsed = Parser::new(lexer);
+        let lexer = RsmlLexer::new(source);
+        let parsed = RsmlParser::new(lexer);
         let dummy_path = PathBuf::from("/test.rsml");
         let data = Typechecker::new(&parsed, &dummy_path, None).await;
         let mut document = Document::new(source.to_string());
