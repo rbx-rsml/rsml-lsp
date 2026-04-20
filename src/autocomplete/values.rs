@@ -1,7 +1,20 @@
 use rbx_reflection::{DataType, PropertyDescriptor, PropertyKind, Scriptability};
 use rbx_rsml::datatype::palette;
 use rbx_types::VariantType;
-use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, InsertTextFormat};
+use tower_lsp::lsp_types::{Command, CompletionItem, CompletionItemKind, InsertTextFormat};
+
+/// Asks the client to re-fire completion after the edit is applied. Editors
+/// don't auto-retrigger on accept even if the inserted text ends in a trigger
+/// character, so items that open a further menu (`tw:` stub, a Tailwind family
+/// that has shades, …) need to request it explicitly. `editor.action.triggerSuggest`
+/// is the VS Code command id; Zed recognises the same string.
+fn retrigger_command() -> Command {
+    Command {
+        title: "Trigger Suggest".to_string(),
+        command: "editor.action.triggerSuggest".to_string(),
+        arguments: None,
+    }
+}
 
 /// Classifies what the user has typed immediately before the cursor within a
 /// property assignment's RHS, so `get_value_completions` can choose between
@@ -102,30 +115,48 @@ pub fn get_value_completions(
 
         ValuePrefix::EnumShorthand => enum_shorthand_items(class_names, property_name),
 
-        ValuePrefix::TailwindFamily { .. } => color_items(palette::tailwind_families(), "tw"),
+        ValuePrefix::TailwindFamily { .. } => color_items(palette::tailwind_families(), "tw", true),
 
         ValuePrefix::TailwindShade { family } => shade_items(palette::tailwind_shades(family), "tw", family),
 
-        ValuePrefix::SkinFamily { .. } => color_items(palette::skin_families(), "skin"),
+        ValuePrefix::SkinFamily { .. } => color_items(palette::skin_families(), "skin", true),
 
         ValuePrefix::SkinShade { family } => shade_items(palette::skin_shades(family), "skin", family),
 
-        ValuePrefix::BrickFamily { .. } => color_items(palette::brick_names(), "bc"),
+        ValuePrefix::BrickFamily { .. } => color_items(palette::brick_names(), "bc", false),
 
-        ValuePrefix::CssFamily { .. } => color_items(palette::css_names(), "css"),
+        ValuePrefix::CssFamily { .. } => color_items(palette::css_names(), "css", false),
 
         ValuePrefix::Fresh => fresh_items(class_names, property_name),
     }
 }
 
-fn color_items(names: &[&'static str], prefix: &str) -> Vec<CompletionItem> {
+fn color_items(
+    names: &[&'static str],
+    prefix: &str,
+    has_next_level: bool,
+) -> Vec<CompletionItem> {
     names
         .iter()
-        .map(|name| CompletionItem {
-            label: name.to_string(),
-            kind: Some(CompletionItemKind::COLOR),
-            detail: Some(format!("{}:{}", prefix, name)),
-            ..CompletionItem::default()
+        .map(|name| {
+            // Append a trailing `:` when the palette has a further level
+            // (Tailwind/Skin → shades). The retrigger command then opens
+            // the shade menu immediately; without the `:` the re-scan
+            // would classify the buffer as `*Family` again and loop.
+            let (insert_text, command) = if has_next_level {
+                (Some(format!("{}:", name)), Some(retrigger_command()))
+            } else {
+                (None, None)
+            };
+
+            CompletionItem {
+                label: name.to_string(),
+                kind: Some(CompletionItemKind::COLOR),
+                detail: Some(format!("{}:{}", prefix, name)),
+                insert_text,
+                command,
+                ..CompletionItem::default()
+            }
         })
         .collect()
 }
@@ -376,6 +407,7 @@ fn color3_items() -> Vec<CompletionItem> {
             label: prefix.to_string(),
             kind: Some(CompletionItemKind::COLOR),
             detail: Some(format!("{}…", prefix)),
+            command: Some(retrigger_command()),
             ..CompletionItem::default()
         });
     }
@@ -539,6 +571,73 @@ mod tests {
         let got = labels(&items);
         assert!(got.contains(&"500"));
         assert!(!got.contains(&"red"));
+    }
+
+    #[test]
+    fn tailwind_family_item_inserts_trailing_colon_and_retriggers() {
+        let items = get_value_completions(
+            "= tw:",
+            5,
+            &["Frame".to_string()],
+            "BackgroundColor3",
+        );
+        let red = items
+            .iter()
+            .find(|item| item.label == "red")
+            .expect("red family missing");
+        assert_eq!(red.insert_text.as_deref(), Some("red:"));
+        assert_eq!(
+            red.command.as_ref().map(|c| c.command.as_str()),
+            Some("editor.action.triggerSuggest")
+        );
+    }
+
+    #[test]
+    fn css_name_item_does_not_retrigger() {
+        let items = get_value_completions(
+            "= css:",
+            6,
+            &["Frame".to_string()],
+            "BackgroundColor3",
+        );
+        let any = items.first().expect("css items missing");
+        assert!(any.insert_text.is_none());
+        assert!(any.command.is_none());
+    }
+
+    #[test]
+    fn color3_prefix_stubs_retrigger() {
+        let items = get_value_completions(
+            "= ",
+            2,
+            &["Frame".to_string()],
+            "BackgroundColor3",
+        );
+        for prefix in ["tw:", "skin:", "bc:", "css:"] {
+            let item = items
+                .iter()
+                .find(|item| item.label == prefix)
+                .expect("prefix stub missing");
+            assert_eq!(
+                item.command.as_ref().map(|c| c.command.as_str()),
+                Some("editor.action.triggerSuggest"),
+                "{} stub should retrigger",
+                prefix
+            );
+        }
+    }
+
+    #[test]
+    fn tw_amber_trailing_colon_returns_shades() {
+        let items = get_value_completions(
+            "= tw:amber:",
+            11,
+            &["Frame".to_string()],
+            "BackgroundColor3",
+        );
+        let got = labels(&items);
+        assert!(got.contains(&"500"));
+        assert!(!got.contains(&"amber"));
     }
 
     #[test]

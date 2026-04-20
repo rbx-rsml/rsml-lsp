@@ -1,6 +1,24 @@
 use rbx_rsml::lexer::Token;
-use rbx_rsml::parser::{Construct, Delimited};
+use rbx_rsml::parser::{Construct, Delimited, SpanEnd};
 use rbx_rsml::typechecker::{DefinitionKind, Definitions};
+
+// `Construct::end()` returns 0 for a body-less phantom `Rule` (see
+// parser/types.rs), so `span().1` isn't safe to use as an end bound. For that
+// specific case — the parser recovering dangling punctuation into a selector
+// list — fall back to the last selector's end.
+fn construct_end(construct: &Construct<'_>) -> usize {
+    if let Construct::Rule {
+        selectors: Some(selectors),
+        body: None,
+    } = construct
+    {
+        if let Some(last) = selectors.last() {
+            return last.end();
+        }
+    }
+
+    construct.span().1
+}
 
 pub fn build_rule_body_definitions(body: &Option<Delimited<'_>>, definitions: &mut Definitions) {
     let Some(body) = body.as_ref() else { return };
@@ -48,23 +66,39 @@ pub fn build_rule_body_definitions(body: &Option<Delimited<'_>>, definitions: &m
                 let Some(middle) = middle else { continue };
 
                 let assign_start = middle.token.start();
-                let assign_end = terminator
+                let mut assign_end = terminator
                     .as_ref()
                     .map(|t| t.token.end())
                     .or_else(|| right.as_ref().map(|r| r.span().1))
                     .unwrap_or_else(|| {
-                        // RHS wasn't captured by the parser — extend up to the
-                        // next sibling's start (or the closing `}`) so the
-                        // cursor on invalid/partial RHS text still dispatches
-                        // as an assignment instead of leaking to the scope.
-                        let next_start = content
-                            .get(index + 1)
-                            .map(|next| next.span().0.saturating_sub(1));
+                        // RHS wasn't captured by the parser — absorb the
+                        // entire next sibling (typically a phantom Rule the
+                        // parser recovered from dangling punctuation, e.g.
+                        // `tw:` or `X.`). Using span().1 covers the
+                        // punctuation byte AND the newline after it, so the
+                        // cursor position the client queries (which sits one
+                        // past the colon) still dispatches as Assignment.
+                        // Real sibling constructs (Assignment, Declaration,
+                        // Selector for nested Rule) re-insert over their own
+                        // ranges later and overwrite this claim.
+                        let next_end = content.get(index + 1).map(construct_end);
 
-                        next_start
+                        next_end
                             .or(body_close_start.map(|pos| pos.saturating_sub(1)))
                             .unwrap_or_else(|| middle.token.end())
                     });
+
+                // Extend the Assignment through any trailing body-less
+                // phantom Rule the parser recovered from dangling
+                // punctuation. This also covers the case where the RHS was
+                // captured as a token (e.g. the TailwindColor `tw:amber`)
+                // and a further `:` is recovered as a separate phantom
+                // Rule — without this the cursor one byte past the final
+                // `:` dispatches as Selector and silently returns nothing.
+                if let Some(Construct::Rule { body: None, .. }) = content.get(index + 1) {
+                    let phantom_end = construct_end(&content[index + 1]);
+                    assign_end = assign_end.max(phantom_end);
+                }
 
                 definitions.insert(
                     assign_start..=assign_end,

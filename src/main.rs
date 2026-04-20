@@ -1615,27 +1615,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn debug_tw_colon_dispatch() {
+    async fn definitions_trailing_colon_stays_inside_assignment() {
         let source = "Frame {\n    BackgroundColor3 = tw:\n}";
         let document = typecheck_and_get_definitions(source).await;
 
-        let tw_colon_end = source.find("tw:").unwrap() + 3;
+        let colon_pos = source.find("tw:").unwrap() + 2;
+        let after_colon = colon_pos + 1;
 
-        eprintln!("cursor byte: {}", tw_colon_end);
-        for byte_pos in (tw_colon_end - 2)..=tw_colon_end {
+        for byte_pos in [colon_pos, after_colon] {
             let entry = document.definitions.get_key_value(&byte_pos);
-            eprintln!(
-                "byte {}: {:?}",
-                byte_pos,
-                entry.map(|(r, k)| (r.clone(), std::mem::discriminant(k)))
-            );
+            assert!(entry.is_some(), "should have entry at byte {}", byte_pos);
+
+            match entry.unwrap().1 {
+                DefinitionKind::Assignment { property_name, .. } => {
+                    assert_eq!(property_name, "BackgroundColor3");
+                }
+                other => panic!(
+                    "expected Assignment at byte {} (trailing `:` after tw), got {:?}",
+                    byte_pos,
+                    std::mem::discriminant(other)
+                ),
+            }
         }
-        eprintln!("--- all entries ---");
-        for (range, kind) in document.definitions.iter() {
-            eprintln!("  {:?}: {:?}", range, std::mem::discriminant(kind));
+    }
+
+    #[tokio::test]
+    async fn definitions_trailing_colon_after_tailwind_token_stays_inside_assignment() {
+        // `tw:amber` lexes as one TailwindColor token, so the trailing `:`
+        // is recovered as a phantom Rule *after* the Assignment's captured
+        // RHS. Without the phantom-Rule absorption in selectors.rs, the
+        // cursor one byte past the trailing `:` (where the client queries)
+        // falls into the Selector range and completion returns nothing.
+        let source = "Frame {\n    BackgroundColor3 = tw:amber:\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let trailing_colon = source.rfind(':').unwrap();
+        let after_colon = trailing_colon + 1;
+
+        for byte_pos in [trailing_colon, after_colon] {
+            let entry = document.definitions.get_key_value(&byte_pos);
+            assert!(entry.is_some(), "should have entry at byte {}", byte_pos);
+
+            match entry.unwrap().1 {
+                DefinitionKind::Assignment { property_name, .. } => {
+                    assert_eq!(property_name, "BackgroundColor3");
+                }
+                other => panic!(
+                    "expected Assignment at byte {} (trailing `:` after tw:amber), got {:?}",
+                    byte_pos,
+                    std::mem::discriminant(other)
+                ),
+            }
         }
-        eprintln!("Assignment disc: {:?}", std::mem::discriminant(&DefinitionKind::Assignment { property_name: "x".to_string(), type_definition: vec![] }));
-        eprintln!("Scope disc: {:?}", std::mem::discriminant(&DefinitionKind::Scope { type_definition: vec![] }));
     }
 
     #[tokio::test]
