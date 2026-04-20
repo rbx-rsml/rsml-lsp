@@ -2,11 +2,12 @@
 ## Changes
 - Added support for query selectors `@{ident}`.
 - Macro's can now have a return context specified (`@macro Test -> Context {}`). Supported context's are `Construct`, `Selector` and `Assignment`.
-- A type error will be thrown when calling a macro which doesn't exist.
-- A type error will be thrown when a macro overload is invalid.
+- An error will be thrown when calling a macro which doesn't exist.
+- An error will be thrown when a macro overload is invalid.
 - Added typechecking for annotated tuples.
 - Added type hover hints for tokens.
-- A type error will be thrown when referencing a token which doesn't exist.
+- An error will be thrown when referencing a token which doesn't exist.
+- An errror will be thrown when a infinite recursion cycle is detected when calling a macro.
 
 ## Fixes
 - Fixed types for rule selectors.

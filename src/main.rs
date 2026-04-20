@@ -28,16 +28,16 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use ropey::Rope;
 
+use rbx_rsml::datatype::Datatype;
 use rbx_rsml::lexer::{RsmlLexer, SpannedToken};
 use rbx_rsml::parser::RsmlParser;
 use rbx_rsml::range_from_span::RangeFromSpan;
-use rbx_rsml::datatype::Datatype;
-use rbx_types::Variant;
 use rbx_rsml::typechecker::{
     CyclicKind, DefinitionKind, PushTypeError, ResolvedTypeKey, ResolvedTypes, TypeError,
     TypecheckedRsml, Typechecker,
     luaurc::{Aliases, Luaurc},
 };
+use rbx_types::Variant;
 
 pub mod autocomplete;
 pub mod workspaces;
@@ -633,12 +633,12 @@ impl LanguageServer for Backend {
                     MarkedString::from_markdown(format!("```luau\n{}\n```", hint.to_string())),
                 ),
 
-                DefinitionKind::Token { name, is_static } => HoverContents::Scalar(
-                    MarkedString::from_markdown(format!(
+                DefinitionKind::Token { name, is_static } => {
+                    HoverContents::Scalar(MarkedString::from_markdown(format!(
                         "```luau\n{}\n```",
                         format_token_hint(name, *is_static, &document.resolved_types)
-                    )),
-                ),
+                    )))
+                }
 
                 DefinitionKind::Assignment { property_name, .. } => {
                     let resolved = document
@@ -2035,11 +2035,14 @@ mod tests {
         }
     }
 
-    fn assert_token_at(document: &Document, byte_pos: usize, expected_name: &str, expected_static: bool) {
+    fn assert_token_at(
+        document: &Document,
+        byte_pos: usize,
+        expected_name: &str,
+        expected_static: bool,
+    ) {
         let entry = document.definitions.get_key_value(&byte_pos);
-        let entry = entry.unwrap_or_else(|| {
-            panic!("no definition entry at byte {}", byte_pos)
-        });
+        let entry = entry.unwrap_or_else(|| panic!("no definition entry at byte {}", byte_pos));
         match entry.1 {
             DefinitionKind::Token { name, is_static } => {
                 assert_eq!(name, expected_name, "name mismatch at byte {}", byte_pos);
