@@ -33,9 +33,9 @@ use rbx_rsml::lexer::{RsmlLexer, SpannedToken};
 use rbx_rsml::parser::RsmlParser;
 use rbx_rsml::range_from_span::RangeFromSpan;
 use rbx_rsml::typechecker::{
-    CyclicKind, DefinitionKind, PushTypeError, ResolvedTypeKey, ResolvedTypes, TypeError,
+    CyclicKind, DefinitionKind, ReportTypeError, ResolvedTypeKey, ResolvedTypes, TypeError,
     TypecheckedRsml, Typechecker,
-    luaurc::{Aliases, Luaurc},
+    luaurc::Luaurc,
 };
 use rbx_types::Variant;
 
@@ -406,14 +406,15 @@ impl LanguageServer for Backend {
                     };
 
                     let old_aliases = old_luaurc.aliases;
-                    let new_aliases = Aliases::from_path(&path).await;
+                    let fresh_luaurc = Luaurc::from_path(&path).await;
 
                     let luaurc_alias_diff =
-                        old_aliases.diff(&new_aliases).cloned().collect::<Vec<_>>();
+                        old_aliases.diff(&fresh_luaurc.aliases).cloned().collect::<Vec<_>>();
 
                     let new_luaurc = workspace.luaurc.insert(Luaurc {
-                        aliases: new_aliases,
+                        aliases: fresh_luaurc.aliases,
                         dependants: old_luaurc.dependants,
+                        language_mode: fresh_luaurc.language_mode,
                     });
 
                     let mut documents = self.documents.lock().await;
@@ -641,21 +642,24 @@ impl LanguageServer for Backend {
                 }
 
                 DefinitionKind::Assignment { property_name, .. } => {
-                    let resolved = document
-                        .resolved_types
-                        .get(&ResolvedTypeKey::Property {
-                            start: *span.start(),
-                        })
-                        .map(|dt| match dt {
-                            Datatype::IncompleteEnumShorthand(_) => {
-                                format!("Enum.{}", property_name)
-                            }
-                            Datatype::Variant(Variant::EnumItem(item)) => {
-                                format!("Enum.{}", item.ty)
-                            }
-                            other => other.type_name(),
-                        })
-                        .unwrap_or_else(|| "unknown".to_string());
+                    let Some(dt) = document.resolved_types.get(&ResolvedTypeKey::Property {
+                        start: *span.start(),
+                    }) else {
+                        return Ok(None);
+                    };
+
+                    let resolved = match dt {
+                        Datatype::IncompleteEnumShorthand(_) => {
+                            format!("Enum.{}", property_name)
+                        }
+
+                        Datatype::Variant(Variant::EnumItem(item)) => {
+                            format!("Enum.{}", item.ty)
+                        }
+
+                        other => other.type_name(),
+                    };
+
                     HoverContents::Scalar(MarkedString::from_markdown(format!(
                         "```luau\n{}: {}\n```",
                         property_name, resolved,
@@ -1218,7 +1222,7 @@ impl<'a> Backend {
                                 continue;
                             };
 
-                            errors.push(
+                            errors.report(
                                 TypeError::CyclicDerive {
                                     kind: CyclicKind::External(ancestry_chain),
                                 },
