@@ -1615,6 +1615,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn debug_tw_colon_dispatch() {
+        let source = "Frame {\n    BackgroundColor3 = tw:\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let tw_colon_end = source.find("tw:").unwrap() + 3;
+
+        eprintln!("cursor byte: {}", tw_colon_end);
+        for byte_pos in (tw_colon_end - 2)..=tw_colon_end {
+            let entry = document.definitions.get_key_value(&byte_pos);
+            eprintln!(
+                "byte {}: {:?}",
+                byte_pos,
+                entry.map(|(r, k)| (r.clone(), std::mem::discriminant(k)))
+            );
+        }
+        eprintln!("--- all entries ---");
+        for (range, kind) in document.definitions.iter() {
+            eprintln!("  {:?}: {:?}", range, std::mem::discriminant(kind));
+        }
+        eprintln!("Assignment disc: {:?}", std::mem::discriminant(&DefinitionKind::Assignment { property_name: "x".to_string(), type_definition: vec![] }));
+        eprintln!("Scope disc: {:?}", std::mem::discriminant(&DefinitionKind::Scope { type_definition: vec![] }));
+    }
+
+    #[tokio::test]
     async fn definitions_assignment_with_unparseable_rhs_does_not_leak_to_scope() {
         let source = "ImageButton {\n    BackgroundColor3 = ff\n}";
         let document = typecheck_and_get_definitions(source).await;

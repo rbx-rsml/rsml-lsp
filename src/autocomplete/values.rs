@@ -322,16 +322,48 @@ fn bool_item(name: &str) -> CompletionItem {
     }
 }
 
+fn constructor_arg_defaults(name: &str) -> Option<&'static [&'static str]> {
+    match name {
+        "udim" | "vec2" | "vec2i16" | "numrange" => Some(&["0", "0"]),
+        "vec3" | "vec3i16" | "color3" | "rgb" | "oklab" | "oklch" | "cframe" => {
+            Some(&["0", "0", "0"])
+        }
+        "udim2" | "rect" => Some(&["0", "0", "0", "0"]),
+        "brickcolor" | "content" => Some(&["\"\""]),
+        "numseq" | "floor" | "ceil" | "round" | "abs" => Some(&["0"]),
+        "colorseq" => Some(&["color3(0, 0, 0)"]),
+        "font" => Some(&["\"SourceSansPro\""]),
+        "lerp" => Some(&["0", "0", "0"]),
+        _ => None,
+    }
+}
+
 fn constructor_items(names: &[&str]) -> Vec<CompletionItem> {
     names
         .iter()
-        .map(|name| CompletionItem {
-            label: format!("{}(…)", name),
-            kind: Some(CompletionItemKind::FUNCTION),
-            insert_text: Some(format!("{}($0)", name)),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
-            detail: Some(format!("{}(...)", name)),
-            ..CompletionItem::default()
+        .map(|name| {
+            let insert_text = match constructor_arg_defaults(name) {
+                Some(defaults) => {
+                    let args = defaults
+                        .iter()
+                        .enumerate()
+                        .map(|(index, default)| format!("${{{}:{}}}", index + 1, default))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{} ({})$0", name, args)
+                }
+
+                None => format!("{} ($0)", name),
+            };
+
+            CompletionItem {
+                label: format!("{} (…)", name),
+                kind: Some(CompletionItemKind::FUNCTION),
+                insert_text: Some(insert_text),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                detail: Some(format!("{} (...)", name)),
+                ..CompletionItem::default()
+            }
         })
         .collect()
 }
@@ -414,6 +446,58 @@ mod tests {
         let items = get_value_completions("= ", 2, &["Frame".to_string()], "Size");
         let got = labels(&items);
         assert!(got.iter().any(|label| label.starts_with("udim2")));
+    }
+
+    #[test]
+    fn constructor_insert_text_prefills_numeric_defaults() {
+        let items = get_value_completions("= ", 2, &["Frame".to_string()], "Size");
+        let udim2 = items
+            .iter()
+            .find(|item| item.label.starts_with("udim2"))
+            .expect("udim2 completion missing");
+
+        let insert_text = udim2.insert_text.as_deref().unwrap_or("");
+        assert_eq!(insert_text, "udim2 (${1:0}, ${2:0}, ${3:0}, ${4:0})$0");
+    }
+
+    #[test]
+    fn constructor_defaults_cover_every_tuple_annotation() {
+        // Mirror of TUPLE_ANNOTATIONS keys at
+        // rsml-rust-rewrite/src/datatype/tuple/tuple_annotations/mod.rs.
+        // The `tuple` module is crate-internal in rbx_rsml, so we can't
+        // import the map directly — keep this list in sync by hand.
+        const EXPECTED: &[&str] = &[
+            "udim", "udim2", "rect", "vec2", "vec2i16", "vec3", "vec3i16",
+            "cframe", "color3", "rgb", "oklab", "oklch", "brickcolor",
+            "colorseq", "numseq", "numrange", "font", "content", "lerp",
+            "floor", "ceil", "round", "abs",
+        ];
+
+        for name in EXPECTED {
+            assert!(
+                constructor_arg_defaults(name).is_some(),
+                "constructor_arg_defaults missing default for `{}`",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn constructor_insert_text_prefills_string_defaults() {
+        let items = get_value_completions(
+            "= ",
+            2,
+            &["Frame".to_string()],
+            "BrickColor",
+        );
+        let brickcolor = items
+            .iter()
+            .find(|item| item.label.starts_with("brickcolor"));
+
+        if let Some(item) = brickcolor {
+            let insert_text = item.insert_text.as_deref().unwrap_or("");
+            assert_eq!(insert_text, "brickcolor (${1:\"\"})$0");
+        }
     }
 
     #[test]
