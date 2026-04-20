@@ -24,7 +24,12 @@ pub fn build_rule_body_definitions(body: &Option<Delimited<'_>>, definitions: &m
         })
         .unwrap_or_default();
 
-    for construct in content {
+    // Upper bound for an Assignment whose RHS the parser didn't capture: run
+    // up to the next sibling construct (e.g. a recovered nested rule from the
+    // unrecognized RHS tokens) or the body's closing `}` if it was the last one.
+    let body_close_start = body.right.as_ref().map(|r| r.token.start());
+
+    for (index, construct) in content.iter().enumerate() {
         match construct {
             Construct::Rule { body, .. } => {
                 build_rule_body_definitions(body, definitions);
@@ -47,7 +52,19 @@ pub fn build_rule_body_definitions(body: &Option<Delimited<'_>>, definitions: &m
                     .as_ref()
                     .map(|t| t.token.end())
                     .or_else(|| right.as_ref().map(|r| r.span().1))
-                    .unwrap_or(middle.token.end());
+                    .unwrap_or_else(|| {
+                        // RHS wasn't captured by the parser — extend up to the
+                        // next sibling's start (or the closing `}`) so the
+                        // cursor on invalid/partial RHS text still dispatches
+                        // as an assignment instead of leaking to the scope.
+                        let next_start = content
+                            .get(index + 1)
+                            .map(|next| next.span().0.saturating_sub(1));
+
+                        next_start
+                            .or(body_close_start.map(|pos| pos.saturating_sub(1)))
+                            .unwrap_or_else(|| middle.token.end())
+                    });
 
                 definitions.insert(
                     assign_start..=assign_end,

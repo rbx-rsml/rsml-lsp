@@ -1615,6 +1615,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn definitions_assignment_with_unparseable_rhs_does_not_leak_to_scope() {
+        let source = "ImageButton {\n    BackgroundColor3 = ff\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let ff_start = source.find("ff").unwrap();
+
+        for byte_pos in [ff_start, ff_start + 1, ff_start + 2] {
+            let entry = document.definitions.get_key_value(&byte_pos);
+            assert!(entry.is_some(), "should have entry at byte {}", byte_pos);
+            match entry.unwrap().1 {
+                DefinitionKind::Assignment { property_name, .. } => {
+                    assert_eq!(property_name, "BackgroundColor3");
+                }
+                other => panic!(
+                    "expected Assignment at byte {} (within unparseable RHS), got {:?}",
+                    byte_pos,
+                    std::mem::discriminant(other)
+                ),
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn definitions_shorthand_colon() {
         let source = "ImageLabel :hover {\n    ScaleType = :\n}";
         let document = typecheck_and_get_definitions(source).await;
