@@ -200,7 +200,12 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
 
                 completion_provider: Some(CompletionOptions {
-                    trigger_characters: Some(vec![":".to_string(), ".".to_string()]),
+                    trigger_characters: Some(vec![
+                        ":".to_string(),
+                        ".".to_string(),
+                        "=".to_string(),
+                        "$".to_string(),
+                    ]),
                     ..CompletionOptions::default()
                 }),
 
@@ -714,7 +719,12 @@ impl LanguageServer for Backend {
             DefinitionKind::Assignment {
                 property_name,
                 type_definition,
-            } => get_enum_shorthand_completions(type_definition, property_name),
+            } => autocomplete::values::get_value_completions(
+                &document.source,
+                byte_offset,
+                type_definition,
+                property_name,
+            ),
 
             DefinitionKind::EnumName => get_enum_name_completions(),
 
@@ -1644,11 +1654,16 @@ mod tests {
             "should have entry at byte {} (after 'Enum.')",
             dot_pos
         );
-        assert!(
-            matches!(entry.unwrap().1, DefinitionKind::EnumName),
-            "expected EnumName at byte {}",
-            dot_pos
-        );
+        match entry.unwrap().1 {
+            DefinitionKind::FilteredEnumName { enum_name } => {
+                assert_eq!(enum_name, "AutomaticSize");
+            }
+            other => panic!(
+                "expected FilteredEnumName at byte {}, got {:?}",
+                dot_pos,
+                std::mem::discriminant(other)
+            ),
+        }
     }
 
     #[tokio::test]
@@ -1663,11 +1678,55 @@ mod tests {
             "should have entry at byte {} (after 'Enum:')",
             colon_pos
         );
+        match entry.unwrap().1 {
+            DefinitionKind::FilteredEnumName { enum_name } => {
+                assert_eq!(enum_name, "AutomaticSize");
+            }
+            other => panic!(
+                "expected FilteredEnumName at byte {}, got {:?}",
+                colon_pos,
+                std::mem::discriminant(other)
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn definitions_enum_dot_name_non_enum_property_falls_back_to_enum_name() {
+        let source = "Frame {\n    Size = Enum.\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let dot_pos = source.find("Enum.").unwrap() + 5;
+        let entry = document.definitions.get_key_value(&dot_pos);
+        assert!(
+            entry.is_some(),
+            "should have entry at byte {} (after 'Enum.')",
+            dot_pos
+        );
         assert!(
             matches!(entry.unwrap().1, DefinitionKind::EnumName),
-            "expected EnumName at byte {}",
-            colon_pos
+            "expected EnumName (unfiltered) for non-enum property"
         );
+    }
+
+    #[tokio::test]
+    async fn definitions_enum_variant_overrides_wrong_typed_name() {
+        // Even if user typed the wrong enum name, variants should still be
+        // filtered by the property's declared enum.
+        let source = "Frame {\n    AutomaticSize = Enum.Foo.\n}";
+        let document = typecheck_and_get_definitions(source).await;
+
+        let trailing_dot = source.rfind('.').unwrap() + 1;
+        let entry = document.definitions.get_key_value(&trailing_dot);
+        assert!(entry.is_some());
+        match entry.unwrap().1 {
+            DefinitionKind::EnumVariant { enum_name } => {
+                assert_eq!(enum_name, "AutomaticSize");
+            }
+            other => panic!(
+                "expected EnumVariant with AutomaticSize, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        }
     }
 
     #[tokio::test]

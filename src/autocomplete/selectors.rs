@@ -73,14 +73,36 @@ pub fn build_rule_body_definitions(body: &Option<Delimited<'_>>, definitions: &m
                             .map(|node| node.token.end())
                             .unwrap_or(assign_end);
 
-                        definitions
-                            .insert(name_range_start..=name_range_end, DefinitionKind::EnumName);
+                        // When the property has a declared enum type (e.g.
+                        // `AutomaticSize`), narrow long-form completion to that
+                        // enum instead of dumping every enum in the reflection db.
+                        let property_enum = super::values::property_enum_name(&current_classes, property_name);
+
+                        let name_range_kind = match property_enum.clone() {
+                            Some(enum_name) => DefinitionKind::FilteredEnumName { enum_name },
+                            None => DefinitionKind::EnumName,
+                        };
+
+                        definitions.insert(name_range_start..=name_range_end, name_range_kind);
 
                         if let Some(name_node) = name {
-                            let enum_name = match name_node.token.value() {
-                                Token::TagSelectorOrEnumPart(Some(name)) => name,
-                                Token::StateSelectorOrEnumPart(Some(name)) => name,
-                                _ => continue,
+                            let typed_name = match name_node.token.value() {
+                                Token::TagSelectorOrEnumPart(Some(name)) => Some(*name),
+                                Token::StateSelectorOrEnumPart(Some(name)) => Some(*name),
+                                _ => None,
+                            };
+
+                            // Without a typed name the user is still picking an
+                            // enum name, so leave the earlier FilteredEnumName /
+                            // EnumName range intact instead of shadowing it.
+                            if typed_name.is_none() {
+                                continue;
+                            }
+
+                            let variant_enum_name = property_enum.or_else(|| typed_name.map(String::from));
+
+                            let Some(enum_name) = variant_enum_name else {
+                                continue;
                             };
 
                             let variant_range_start = name_node.token.end();
@@ -91,9 +113,7 @@ pub fn build_rule_body_definitions(body: &Option<Delimited<'_>>, definitions: &m
 
                             definitions.insert(
                                 variant_range_start..=variant_range_end,
-                                DefinitionKind::EnumVariant {
-                                    enum_name: enum_name.to_string(),
-                                },
+                                DefinitionKind::EnumVariant { enum_name },
                             );
                         }
                     }

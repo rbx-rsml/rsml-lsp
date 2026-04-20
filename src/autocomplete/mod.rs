@@ -9,6 +9,7 @@ pub mod selectors;
 pub mod tokens;
 pub mod tween;
 pub mod derive;
+pub mod values;
 
 pub fn build_definitions(
     parsed: &ParsedRsml<'_>,
