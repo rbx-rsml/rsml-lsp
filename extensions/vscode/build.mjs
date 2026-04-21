@@ -21,6 +21,7 @@ async function main() {
         platform: 'node',
         outfile: 'index.js',
         external: ['vscode'],
+        loader: { '.txt': 'text' },
         logLevel: 'warning',
         plugins: [
             /* add to the end of plugins array */

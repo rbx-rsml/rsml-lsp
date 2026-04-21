@@ -921,7 +921,9 @@ checksum = "f93e7e49bb0bf967717f7bd674458b3d6b0c5f48ec7e3038166026a69fc22223"
 
 [[package]]
 name = "rbx-rsml"
-version = "0.1.0"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8aedaf6cb9686aa227151a7379e4dfed5502a070541572658f4f3de9164b94cb"
 dependencies = [
  "array-concat",
  "enum-kinds",
@@ -1054,7 +1056,7 @@ dependencies = [
 
 [[package]]
 name = "rsml-lsp"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "futures",
  "indexmap",

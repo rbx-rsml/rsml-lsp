@@ -16,7 +16,7 @@ jobs:
       - name: Read LSP Version
         id: read-version
         run: |
-          VERSION=$(jq -r '.version' extensions/vscode/lsp-version.json)
+          VERSION=$(tr -d '\n\r' < extensions/vscode/lsp-version.txt)
           TAG="lsp-v${VERSION}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "LSP version: $VERSION (tag: $TAG)"
@@ -96,21 +96,6 @@ jobs:
           [ -f tsconfig.json ] && rm -r tsconfig.json
           [ -f build.mjs ] && rm -r build.mjs
           [ -f bun.lock ] && rm -r bun.lock
-
-      - name: Download LSP Binaries from Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p extensions/vscode/server
-          gh release download "$LSP_TAG" \
-            --pattern "rsml-lsp-server-*.zip" \
-            --dir ./lsp-archives
-
-      - name: Extract LSP Binaries
-        run: |
-          for archive in ./lsp-archives/*.zip; do
-            unzip -o "$archive" -d extensions/vscode/server
-          done
 
       - name: Generate Artifact Name
         shell: bash

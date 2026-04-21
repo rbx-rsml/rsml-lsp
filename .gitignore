@@ -7,6 +7,9 @@
 /extensions/vscode/server
 **/*.vsix
 
+# Shared dev-path LSP binaries (populated by extensions/install-server.sh)
+/extensions/shared/servers/
+
 # Macos Junk
 ._*
 .DS_STORE
