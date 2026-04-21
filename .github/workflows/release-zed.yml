@@ -28,10 +28,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-04-15
-          targets: wasm32-wasip1
+          targets: wasm32-wasip2
 
       - name: Build WASM Extension
-        run: cargo build --release --target wasm32-wasip1 --manifest-path extensions/zed/Cargo.toml
+        run: cargo build --release --target wasm32-wasip2 --manifest-path extensions/zed/Cargo.toml
 
       - name: Save Rust Cache
         uses: actions/cache/save@v4
@@ -45,7 +45,7 @@ jobs:
       - name: Package Extension
         run: |
           mkdir -p staging
-          cp extensions/zed/target/wasm32-wasip1/release/rsml_zed.wasm staging/extension.wasm
+          cp extensions/zed/target/wasm32-wasip2/release/rsml_zed.wasm staging/extension.wasm
           cp extensions/zed/extension.toml staging/
           cp -r extensions/zed/languages staging/
           mkdir -p staging/grammars

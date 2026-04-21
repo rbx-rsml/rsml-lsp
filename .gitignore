@@ -7,6 +7,10 @@
 /extensions/vscode/server
 **/*.vsix
 
+# Zed Extension
+/extensions/zed/grammars/*.wasm
+/extensions/zed/target
+
 # Shared dev-path LSP binaries (populated by extensions/install-server.sh)
 /extensions/shared/servers/
 
