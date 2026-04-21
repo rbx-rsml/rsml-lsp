@@ -29,7 +29,6 @@
 ; Keywords / Declarations
 "@macro" @keyword
 "@priority" @keyword
-"@name" @keyword
 "@derive" @keyword
 "@tween" @keyword
 

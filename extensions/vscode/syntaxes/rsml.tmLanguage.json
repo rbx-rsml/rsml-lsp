@@ -234,7 +234,7 @@
 		"declarations": {
 			"patterns": [
 				{
-					"begin": "(@(derive|priority|name|macro))",
+					"begin": "(@(derive|priority|macro|tween))",
 					"end": ";|}",
 					"beginCaptures": {
 						"1": {
@@ -285,6 +285,10 @@
 
 		"selectors": {
 			"patterns": [
+				{
+					"match": "@(?!(?:derive|priority|macro|tween|util)\\b)([_a-zA-Z](-?[_a-zA-Z\\d])*)",
+					"name": "entity.name.tag.css"
+				},
 				{
 					"match": "(#|\\.|:|::)([_a-zA-Z](-?[_a-zA-Z\\d])*)?",
 					"name": "entity.name.tag.css"
@@ -474,6 +478,11 @@
 			"patterns": [
 				{
 					"match": "rbxassetid://[0-9]*",
+					"name": "string"
+				},
+
+				{
+					"match": "contentid://[0-9]*",
 					"name": "string"
 				},
 

@@ -921,9 +921,9 @@ checksum = "f93e7e49bb0bf967717f7bd674458b3d6b0c5f48ec7e3038166026a69fc22223"
 
 [[package]]
 name = "rbx-rsml"
-version = "1.0.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8aedaf6cb9686aa227151a7379e4dfed5502a070541572658f4f3de9164b94cb"
+checksum = "919e09f09031cae0e475586b2eed8dae52af236856428923b242d4d2712143ea"
 dependencies = [
  "array-concat",
  "enum-kinds",

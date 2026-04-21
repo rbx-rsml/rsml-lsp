@@ -1,118 +1,148 @@
-import * as path from "path"
-import * as fs from "fs"
-import * as https from "https"
-import * as os from "os"
-import { workspace, ExtensionContext, ProgressLocation } from "vscode"
-import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node"
-import vscode from "vscode"
-import AdmZip from "adm-zip"
-import lspVersionRaw from "../lsp-version.txt"
+import * as path from "path";
+import * as fs from "fs";
+import * as https from "https";
+import * as os from "os";
+import { workspace, ExtensionContext, ProgressLocation } from "vscode";
+import {
+    LanguageClient,
+    LanguageClientOptions,
+    ServerOptions,
+} from "vscode-languageclient/node";
+import vscode from "vscode";
+import AdmZip from "adm-zip";
+import lspVersionRaw from "../lsp-version.txt";
 
-const LSP_VERSION = lspVersionRaw.trim()
+const LSP_VERSION = lspVersionRaw.trim();
 
-let client: LanguageClient
+let client: LanguageClient;
 
 const getPlatformLabel = (): string | undefined => {
     switch (process.platform) {
-        case "win32": return "windows-x86_64"
+        case "win32":
+            return "windows-x86_64";
 
-        case "darwin": switch (process.arch) {
-            case "arm64": return "macos-aarch64"
-            case "x64": return "macos-x86_64"
-        }
+        case "darwin":
+            switch (process.arch) {
+                case "arm64":
+                    return "macos-aarch64";
+                case "x64":
+                    return "macos-x86_64";
+            }
 
-        case "linux": if (process.arch === "x64") return "linux-x86_64"
+        case "linux":
+            if (process.arch === "x64") return "linux-x86_64";
     }
 
-    return undefined
-}
+    return undefined;
+};
 
 const getBinaryName = (label: string): string => {
-    const suffix = process.platform === "win32" ? ".exe" : ""
-    return `rsml-lsp-${label}${suffix}`
-}
+    const suffix = process.platform === "win32" ? ".exe" : "";
+    return `rsml-lsp-${label}${suffix}`;
+};
 
 const findOnPath = (binaryName: string): string | undefined => {
-    const pathEnv = process.env.PATH
+    const pathEnv = process.env.PATH;
 
-    if (!pathEnv) return undefined
+    if (!pathEnv) return undefined;
 
     for (const dir of pathEnv.split(path.delimiter)) {
-        if (!dir) continue
+        if (!dir) continue;
 
-        const candidate = path.join(dir, binaryName)
+        const candidate = path.join(dir, binaryName);
 
-        if (fs.existsSync(candidate)) return candidate
+        if (fs.existsSync(candidate)) return candidate;
     }
 
-    return undefined
-}
+    return undefined;
+};
 
 const downloadToFile = (url: string, destPath: string): Promise<void> => {
     return new Promise((resolve, reject) => {
         const request = (currentUrl: string, redirectsLeft: number) => {
-            https.get(currentUrl, response => {
-                const status = response.statusCode ?? 0
+            https
+                .get(currentUrl, (response) => {
+                    const status = response.statusCode ?? 0;
 
-                if (status >= 300 && status < 400 && response.headers.location) {
-                    if (redirectsLeft <= 0) {
-                        reject(new Error(`too many redirects fetching ${url}`))
-                        return
+                    if (
+                        status >= 300 &&
+                        status < 400 &&
+                        response.headers.location
+                    ) {
+                        if (redirectsLeft <= 0) {
+                            reject(
+                                new Error(`too many redirects fetching ${url}`),
+                            );
+                            return;
+                        }
+
+                        response.resume();
+                        request(response.headers.location, redirectsLeft - 1);
+                        return;
                     }
 
-                    response.resume()
-                    request(response.headers.location, redirectsLeft - 1)
-                    return
-                }
+                    if (status !== 200) {
+                        reject(
+                            new Error(`HTTP ${status} fetching ${currentUrl}`),
+                        );
+                        response.resume();
+                        return;
+                    }
 
-                if (status !== 200) {
-                    reject(new Error(`HTTP ${status} fetching ${currentUrl}`))
-                    response.resume()
-                    return
-                }
+                    const fileStream = fs.createWriteStream(destPath);
+                    response.pipe(fileStream);
 
-                const fileStream = fs.createWriteStream(destPath)
-                response.pipe(fileStream)
-
-                fileStream.on("finish", () => fileStream.close(() => resolve()))
-                fileStream.on("error", err => {
-                    fs.promises.unlink(destPath).catch(() => {})
-                    reject(err)
+                    fileStream.on("finish", () =>
+                        fileStream.close(() => resolve()),
+                    );
+                    fileStream.on("error", (err) => {
+                        fs.promises.unlink(destPath).catch(() => {});
+                        reject(err);
+                    });
                 })
-            }).on("error", reject)
-        }
+                .on("error", reject);
+        };
 
-        request(url, 5)
-    })
-}
+        request(url, 5);
+    });
+};
 
-const pruneStaleVersions = async (parent: string, currentDir: string): Promise<void> => {
-    let entries: string[]
+const pruneStaleVersions = async (
+    parent: string,
+    currentDir: string,
+): Promise<void> => {
+    let entries: string[];
 
     try {
-        entries = await fs.promises.readdir(parent)
-
+        entries = await fs.promises.readdir(parent);
     } catch {
-        return
+        return;
     }
 
-    await Promise.all(entries.map(async name => {
-        if (!name.startsWith("rsml-lsp-") || name === currentDir) return
+    await Promise.all(
+        entries.map(async (name) => {
+            if (!name.startsWith("rsml-lsp-") || name === currentDir) return;
 
-        const stale = path.join(parent, name)
+            const stale = path.join(parent, name);
 
-        await fs.promises.rm(stale, { recursive: true, force: true }).catch(() => {})
-    }))
-}
+            await fs.promises
+                .rm(stale, { recursive: true, force: true })
+                .catch(() => {});
+        }),
+    );
+};
 
 const downloadAndExtract = async (
     url: string,
     archiveName: string,
-    installDir: string
+    installDir: string,
 ): Promise<void> => {
-    await fs.promises.mkdir(installDir, { recursive: true })
+    await fs.promises.mkdir(installDir, { recursive: true });
 
-    const tmpZip = path.join(os.tmpdir(), `${archiveName}-${process.pid}-${Date.now()}.zip`)
+    const tmpZip = path.join(
+        os.tmpdir(),
+        `${archiveName}-${process.pid}-${Date.now()}.zip`,
+    );
 
     try {
         await vscode.window.withProgress(
@@ -122,113 +152,129 @@ const downloadAndExtract = async (
                 cancellable: false,
             },
             async () => {
-                await downloadToFile(url, tmpZip)
+                await downloadToFile(url, tmpZip);
 
-                const zip = new AdmZip(tmpZip)
-                zip.extractAllTo(installDir, true)
-            }
-        )
-
+                const zip = new AdmZip(tmpZip);
+                zip.extractAllTo(installDir, true);
+            },
+        );
     } finally {
-        await fs.promises.unlink(tmpZip).catch(() => {})
+        await fs.promises.unlink(tmpZip).catch(() => {});
     }
-}
+};
 
-const resolveServerPath = async (context: ExtensionContext): Promise<string> => {
-    const label = getPlatformLabel()
+const resolveServerPath = async (
+    context: ExtensionContext,
+): Promise<string> => {
+    const label = getPlatformLabel();
 
-    if (!label) throw new Error(`unsupported platform: ${process.platform} ${process.arch}`)
+    if (!label)
+        throw new Error(
+            `unsupported platform: ${process.platform} ${process.arch}`,
+        );
 
-    const binaryName = getBinaryName(label)
+    const binaryName = getBinaryName(label);
 
-    const pathBinary = findOnPath(binaryName)
+    const pathBinary = findOnPath(binaryName);
 
-    if (pathBinary) return pathBinary
+    if (pathBinary) return pathBinary;
 
-    const sharedPath = path.join(context.extensionPath, "..", "shared", "servers", binaryName)
+    const sharedPath = path.join(
+        context.extensionPath,
+        "..",
+        "shared",
+        "servers",
+        binaryName,
+    );
 
-    if (fs.existsSync(sharedPath)) return sharedPath
+    if (fs.existsSync(sharedPath)) return sharedPath;
 
-    const storageRoot = context.globalStorageUri.fsPath
-    const installDirName = `rsml-lsp-${LSP_VERSION}`
-    const installDir = path.join(storageRoot, installDirName)
-    const binaryPath = path.join(installDir, binaryName)
+    const storageRoot = context.globalStorageUri.fsPath;
+    const installDirName = `rsml-lsp-${LSP_VERSION}`;
+    const installDir = path.join(storageRoot, installDirName);
+    const binaryPath = path.join(installDir, binaryName);
 
-    await fs.promises.mkdir(storageRoot, { recursive: true })
-    await pruneStaleVersions(storageRoot, installDirName)
+    await fs.promises.mkdir(storageRoot, { recursive: true });
+    await pruneStaleVersions(storageRoot, installDirName);
 
     if (!fs.existsSync(binaryPath)) {
-        const archiveName = `rsml-lsp-server-${label}.zip`
-        const url = `https://github.com/rbx-rsml/rsml-lsp/releases/download/lsp-v${LSP_VERSION}/${archiveName}`
+        const archiveName = `rsml-lsp-server-${label}.zip`;
+        const url = `https://github.com/rbx-rsml/rsml-lsp/releases/download/lsp-v${LSP_VERSION}/${archiveName}`;
 
         try {
-            await downloadAndExtract(url, archiveName, installDir)
-
+            await downloadAndExtract(url, archiveName, installDir);
         } catch (err) {
-            const message = err instanceof Error ? err.message : String(err)
+            const message = err instanceof Error ? err.message : String(err);
 
             throw new Error(
                 `failed to download ${archiveName}: ${message}\n\n` +
-                `Install manually by running: extensions/install-server.sh`
-            )
+                    `Install manually by running: extensions/install-server.sh`,
+            );
         }
     }
 
     if (process.platform !== "win32") {
         try {
-            fs.chmodSync(binaryPath, 0o755)
-
+            fs.chmodSync(binaryPath, 0o755);
         } catch {}
     }
 
-    return binaryPath
-}
+    return binaryPath;
+};
 
 export async function activate(context: ExtensionContext) {
-    const outputChannel = vscode.window.createOutputChannel("RSML LSP")
-    outputChannel.appendLine("Activated RSML LSP")
+    const outputChannel = vscode.window.createOutputChannel("RSML LSP");
+    outputChannel.appendLine("Activated RSML LSP");
 
-    let serverModulePath: string
+    let serverModulePath: string;
 
     try {
-        serverModulePath = await resolveServerPath(context)
-
+        serverModulePath = await resolveServerPath(context);
     } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        vscode.window.showErrorMessage(`RSML LSP: ${message}`)
-        return
+        const message = err instanceof Error ? err.message : String(err);
+        vscode.window.showErrorMessage(`RSML LSP: ${message}`);
+        return;
     }
 
-    outputChannel.appendLine(`Using server binary: ${serverModulePath}`)
+    outputChannel.appendLine(`Using server binary: ${serverModulePath}`);
 
     const serverOptions: ServerOptions = {
         run: { command: serverModulePath },
-        debug: { command: serverModulePath, args: ["--debug"] }
-    }
+        debug: { command: serverModulePath, args: ["--debug"] },
+    };
 
     const clientOptions: LanguageClientOptions = {
         documentSelector: [
             { scheme: "file", language: "rsml" },
             { scheme: "file", pattern: "**/luaurc" },
-            { scheme: "file", pattern: "**/*.luaurc" }
+            { scheme: "file", pattern: "**/*.luaurc" },
         ],
         synchronize: {
-            fileEvents: workspace.createFileSystemWatcher("**/{luaurc,*.luaurc,*.rsml}")
-        }
-    }
+            fileEvents: workspace.createFileSystemWatcher(
+                "**/{luaurc,*.luaurc,*.rsml}",
+            ),
+        },
+    };
 
-    client = new LanguageClient("RsmlLanguageServer", "RSML Language Server", serverOptions, clientOptions)
-    client.start()
+    client = new LanguageClient(
+        "RsmlLanguageServer",
+        "RSML Language Server",
+        serverOptions,
+        clientOptions,
+    );
+    client.start();
 
-    context.subscriptions.push(vscode.commands.registerCommand('rsml.restart', async () => {
-        context.subscriptions.forEach(x => x.dispose())
+    context.subscriptions.push(
+        vscode.commands.registerCommand("rsml.restart", async () => {
+            context.subscriptions.forEach((x) => x.dispose());
 
-        await deactivate()
-        await activate(context)
-    }))
+            await deactivate();
+            await activate(context);
+        }),
+    );
 }
 
 export function deactivate(): Thenable<void> | undefined {
-    if (!client) return undefined
-    return client.stop()
+    if (!client) return undefined;
+    return client.stop();
 }

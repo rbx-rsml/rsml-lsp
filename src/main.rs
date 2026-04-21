@@ -34,8 +34,7 @@ use rbx_rsml::parser::RsmlParser;
 use rbx_rsml::range_from_span::RangeFromSpan;
 use rbx_rsml::typechecker::{
     CyclicKind, DefinitionKind, ReportTypeError, ResolvedTypeKey, ResolvedTypes, TypeError,
-    TypecheckedRsml, Typechecker,
-    luaurc::Luaurc,
+    TypecheckedRsml, Typechecker, luaurc::Luaurc,
 };
 use rbx_types::Variant;
 
@@ -413,8 +412,10 @@ impl LanguageServer for Backend {
                     let old_aliases = old_luaurc.aliases;
                     let fresh_luaurc = Luaurc::from_path(&path).await;
 
-                    let luaurc_alias_diff =
-                        old_aliases.diff(&fresh_luaurc.aliases).cloned().collect::<Vec<_>>();
+                    let luaurc_alias_diff = old_aliases
+                        .diff(&fresh_luaurc.aliases)
+                        .cloned()
+                        .collect::<Vec<_>>();
 
                     let new_luaurc = workspace.luaurc.insert(Luaurc {
                         aliases: fresh_luaurc.aliases,
@@ -871,41 +872,6 @@ fn get_enum_variant_completions(enum_name: &str) -> Vec<CompletionItem> {
             ..CompletionItem::default()
         })
         .collect()
-}
-
-static ENUM_NAME_OVERRIDES: phf::Map<&str, &str> = phf_macros::phf_map! {
-    "FlexMode" => "UIFlexMode",
-    "HorizontalFlex" => "UIFlexAlignment",
-    "VerticalFlex" => "UIFlexAlignment",
-};
-
-fn get_enum_shorthand_completions(
-    class_names: &[String],
-    property_name: &str,
-) -> Vec<CompletionItem> {
-    if let Some(enum_name) = ENUM_NAME_OVERRIDES.get(property_name) {
-        return get_enum_variant_completions(enum_name);
-    }
-
-    let Ok(db) = rbx_reflection_database::get() else {
-        return vec![];
-    };
-    for class_name in class_names {
-        let Some(class_desc) = db.classes.get(class_name.as_str()) else {
-            continue;
-        };
-        for ancestor in db.superclasses_iter(class_desc) {
-            let Some(prop_desc) = ancestor.properties.get(property_name) else {
-                continue;
-            };
-            let rbx_reflection::DataType::Enum(enum_name) = &prop_desc.data_type else {
-                continue;
-            };
-            return get_enum_variant_completions(enum_name);
-        }
-    }
-
-    vec![]
 }
 
 fn get_property_completions(class_names: &[String]) -> Vec<CompletionItem> {
@@ -1557,44 +1523,6 @@ mod tests {
         assert!(items.is_empty());
     }
 
-    #[test]
-    fn enum_shorthand_infers_from_property() {
-        let items = get_enum_shorthand_completions(&vec!["Frame".to_string()], "AutomaticSize");
-        assert!(!items.is_empty());
-        let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
-        assert!(labels.contains(&"XY"));
-    }
-
-    #[test]
-    fn enum_shorthand_override_flex_mode() {
-        let items = get_enum_shorthand_completions(&vec!["UIFlexItem".to_string()], "FlexMode");
-        assert!(!items.is_empty());
-        // Should use UIFlexMode enum, not FlexMode
-        let items_from_override = get_enum_variant_completions("UIFlexMode");
-        assert_eq!(items.len(), items_from_override.len());
-    }
-
-    #[test]
-    fn enum_shorthand_scale_type_on_image_label() {
-        let items = get_enum_shorthand_completions(&vec!["ImageLabel".to_string()], "ScaleType");
-        assert!(
-            !items.is_empty(),
-            "ScaleType enum shorthand should return variants for ImageLabel"
-        );
-    }
-
-    #[test]
-    fn enum_shorthand_non_enum_property_returns_empty() {
-        let items = get_enum_shorthand_completions(&vec!["Frame".to_string()], "Size");
-        assert!(items.is_empty());
-    }
-
-    #[test]
-    fn enum_shorthand_unknown_property_returns_empty() {
-        let items = get_enum_shorthand_completions(&vec!["Frame".to_string()], "NotARealProperty");
-        assert!(items.is_empty());
-    }
-
     async fn typecheck_and_get_definitions(source: &str) -> Document {
         use rbx_rsml::lexer::RsmlLexer;
         use rbx_rsml::parser::RsmlParser;
@@ -1852,33 +1780,6 @@ mod tests {
                 trailing_colon,
                 std::mem::discriminant(other)
             ),
-        }
-    }
-
-    #[tokio::test]
-    async fn definitions_non_enum_assignment_returns_empty_completions() {
-        let source = "Frame {\n    Size = \n}";
-        let document = typecheck_and_get_definitions(source).await;
-
-        let after_equals = source.find("= ").unwrap() + 2;
-        let entry = document.definitions.get_key_value(&after_equals);
-        assert!(
-            entry.is_some(),
-            "should have entry at byte {}",
-            after_equals
-        );
-        match entry.unwrap().1 {
-            DefinitionKind::Assignment {
-                property_name,
-                type_definition,
-            } => {
-                let items = get_enum_shorthand_completions(type_definition, property_name);
-                assert!(
-                    items.is_empty(),
-                    "Size is not an enum, should return empty completions"
-                );
-            }
-            _ => (),
         }
     }
 
