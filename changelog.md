@@ -1,7 +1,7 @@
 # v0.3.0
 ## Changes
 - Added support for query selectors `@{ident}`.
-- Macro's can now have a return context specified (`@macro Test -> Context {}`). Supported context's are `Construct`, `Selector` and `Assignment`.
+- Macro's can now have a return context specified (`@macro Test -> Context {}`). Supported context's are `Construct`, `Selector` and `Datatype`.
 - Added type hover hints for tokens.
 - An error will be thrown when calling a macro which doesn't exist.
 - An error will be thrown when a macro overload is invalid.
