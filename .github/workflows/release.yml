@@ -83,7 +83,7 @@ jobs:
           TAG: ${{ github.ref_name }}
           SEMVER: ${{ needs.preflight.outputs.semver }}
         run: |
-          TITLE="LSP v$SEMVER"
+          TITLE="LSP - v$SEMVER"
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "Release $TAG already exists. Updating."
             gh release edit "$TAG" --draft --title "$TITLE" --notes-file /tmp/release_body.md
