@@ -1,5 +1,6 @@
 import * as esbuild from "esbuild"
 import { globby } from "globby";
+import { spawnSync } from "child_process";
 
 const inject = await globby([
     "src/**/*.{js,ts,tsx}",
@@ -7,13 +8,14 @@ const inject = await globby([
 ]);
 
 const watch = process.argv.includes('--watch');
+const isRelease = process.argv.includes('--release');
 
 async function main() {
     const ctx = await esbuild.context({
         entryPoints:["src/index.ts"],
         inject: inject,
         bundle: true,
-        minify: false,
+        minify: isRelease,
         keepNames: true,
         format: 'cjs',
         sourcemap: false,
@@ -33,6 +35,13 @@ async function main() {
     } else {
         await ctx.rebuild();
         await ctx.dispose();
+
+        if (isRelease) {
+            const result = spawnSync('bunx', ['@vscode/vsce', 'package', '--no-dependencies'], {
+                stdio: 'inherit',
+            });
+            if (result.status !== 0) process.exit(result.status ?? 1);
+        }
     }
 }
 

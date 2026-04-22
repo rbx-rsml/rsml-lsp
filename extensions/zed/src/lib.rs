@@ -31,6 +31,16 @@ impl RsmlExtension {
 
         let binary_suffix = if platform == zed::Os::Windows { ".exe" } else { "" };
         let binary_name = format!("rsml-lsp-{label}{binary_suffix}");
+        let install_dir = format!("rsml-lsp-{LSP_VERSION}");
+
+        if let Ok(entries) = fs::read_dir(".") {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with("rsml-lsp-") && name != install_dir {
+                    let _ = fs::remove_dir_all(entry.path());
+                }
+            }
+        }
 
         if let Some(path) = worktree.which(&binary_name) {
             self.cached_binary_path = Some(path.clone());
@@ -45,21 +55,11 @@ impl RsmlExtension {
             return Ok(shared_path);
         }
 
-        let archive_name = format!("rsml-lsp-server-{label}.zip");
+        let archive_name = format!("rsml-lsp-server-{label}.tar.gz");
         let download_url = format!(
             "https://github.com/rbx-rsml/rsml-lsp/releases/download/lsp-v{LSP_VERSION}/{archive_name}"
         );
-        let install_dir = format!("rsml-lsp-{LSP_VERSION}");
         let binary_path = format!("{install_dir}/{binary_name}");
-
-        if let Ok(entries) = fs::read_dir(".") {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                if name.starts_with("rsml-lsp-") && name != install_dir {
-                    let _ = fs::remove_dir_all(entry.path());
-                }
-            }
-        }
 
         if !fs::metadata(&binary_path).map_or(false, |metadata| metadata.is_file()) {
             zed::set_language_server_installation_status(
@@ -72,7 +72,7 @@ impl RsmlExtension {
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
 
-            zed::download_file(&download_url, &install_dir, zed::DownloadedFileType::Zip)
+            zed::download_file(&download_url, &install_dir, zed::DownloadedFileType::GzipTar)
                 .map_err(|err| format!(
                     "failed to download {archive_name}: {err}\n\n\
                     Install manually by running: extensions/install-server.sh\n\

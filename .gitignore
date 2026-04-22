@@ -1,18 +1,19 @@
 # Rust
 /target
 
-# VSCode Extension
-/extensions/vscode/node_modules
-/extensions/vscode/index.js
-/extensions/vscode/server
-**/*.vsix
+# Shared dev-path LSP binaries (populated by extensions/install-server.sh)
+/extensions/shared/servers/
 
 # Zed Extension
 /extensions/zed/grammars/*.wasm
 /extensions/zed/target
 
-# Shared dev-path LSP binaries (populated by extensions/install-server.sh)
-/extensions/shared/servers/
+# VSCode Extension
+/extensions/vscode/node_modules
+/extensions/vscode/index.js
+/extensions/vscode/server
+/extensions/vscode/test
+**/*.vsix
 
 # Macos Junk
 ._*

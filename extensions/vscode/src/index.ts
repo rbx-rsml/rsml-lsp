@@ -2,6 +2,7 @@ import * as path from "path";
 import * as fs from "fs";
 import * as https from "https";
 import * as os from "os";
+import { spawn } from "child_process";
 import { workspace, ExtensionContext, ProgressLocation } from "vscode";
 import {
     LanguageClient,
@@ -9,7 +10,6 @@ import {
     ServerOptions,
 } from "vscode-languageclient/node";
 import vscode from "vscode";
-import AdmZip from "adm-zip";
 import lspVersionRaw from "../lsp-version.txt";
 
 const LSP_VERSION = lspVersionRaw.trim();
@@ -139,9 +139,9 @@ const downloadAndExtract = async (
 ): Promise<void> => {
     await fs.promises.mkdir(installDir, { recursive: true });
 
-    const tmpZip = path.join(
+    const tmpArchive = path.join(
         os.tmpdir(),
-        `${archiveName}-${process.pid}-${Date.now()}.zip`,
+        `${archiveName}-${process.pid}-${Date.now()}.tar.gz`,
     );
 
     try {
@@ -152,15 +152,39 @@ const downloadAndExtract = async (
                 cancellable: false,
             },
             async () => {
-                await downloadToFile(url, tmpZip);
-
-                const zip = new AdmZip(tmpZip);
-                zip.extractAllTo(installDir, true);
+                await downloadToFile(url, tmpArchive);
+                await extractTarGz(tmpArchive, installDir);
             },
         );
     } finally {
-        await fs.promises.unlink(tmpZip).catch(() => {});
+        await fs.promises.unlink(tmpArchive).catch(() => {});
     }
+};
+
+const extractTarGz = (archivePath: string, destDir: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+        const child = spawn("tar", ["-xzf", archivePath, "-C", destDir], {
+            stdio: ["ignore", "ignore", "pipe"],
+        });
+
+        let stderr = "";
+        child.stderr.on("data", (chunk) => {
+            stderr += chunk.toString();
+        });
+
+        child.on("error", reject);
+        child.on("close", (code) => {
+            if (code === 0) {
+                resolve();
+            } else {
+                reject(
+                    new Error(
+                        `tar exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`,
+                    ),
+                );
+            }
+        });
+    });
 };
 
 const resolveServerPath = async (
@@ -198,7 +222,7 @@ const resolveServerPath = async (
     await pruneStaleVersions(storageRoot, installDirName);
 
     if (!fs.existsSync(binaryPath)) {
-        const archiveName = `rsml-lsp-server-${label}.zip`;
+        const archiveName = `rsml-lsp-server-${label}.tar.gz`;
         const url = `https://github.com/rbx-rsml/rsml-lsp/releases/download/lsp-v${LSP_VERSION}/${archiveName}`;
 
         try {
