@@ -1,7 +1,0 @@
-Frame {
-
-}
-
-@macro Test () -> Datatype {
-
-}
