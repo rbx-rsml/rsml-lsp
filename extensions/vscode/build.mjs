@@ -23,6 +23,7 @@ async function main() {
         platform: 'node',
         outfile: 'index.js',
         external: ['vscode'],
+        drop: ['debugger'],
         loader: { '.txt': 'text' },
         logLevel: 'warning',
         plugins: [
@@ -36,12 +37,10 @@ async function main() {
         await ctx.rebuild();
         await ctx.dispose();
 
-        if (isRelease) {
-            const result = spawnSync('bunx', ['@vscode/vsce', 'package', '--no-dependencies'], {
-                stdio: 'inherit',
-            });
-            if (result.status !== 0) process.exit(result.status ?? 1);
-        }
+        const result = spawnSync('bunx', ['@vscode/vsce', 'package', '--no-dependencies'], {
+            stdio: 'inherit',
+        });
+        if (result.status !== 0) process.exit(result.status ?? 1);
     }
 }
 

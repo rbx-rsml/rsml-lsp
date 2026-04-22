@@ -5,8 +5,110 @@ on:
     tags: ["zed-v*"]
 
 jobs:
+  preflight:
+    name: Preflight Checks
+    runs-on: ubuntu-latest
+    outputs:
+      semver: ${{ steps.derive.outputs.semver }}
+      lsp-tag: ${{ steps.derive.outputs.lsp-tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive Versions
+        id: derive
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          SEMVER="${TAG_NAME#zed-v}"
+          LSP_VERSION=$(tr -d '\n\r' < extensions/zed/lsp-version.txt)
+          LSP_TAG="lsp-v${LSP_VERSION}"
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "lsp-tag=$LSP_TAG" >> "$GITHUB_OUTPUT"
+          echo "Tag: $TAG_NAME → semver: $SEMVER, LSP tag: $LSP_TAG"
+
+      - name: Check extension.toml Version Matches Tag
+        run: |
+          SEMVER="${{ steps.derive.outputs.semver }}"
+          TOML_VERSION=$(grep -m1 '^version' extensions/zed/extension.toml | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$TOML_VERSION" != "$SEMVER" ]; then
+            echo "::error::extension.toml version ($TOML_VERSION) does not match tag (zed-v$SEMVER). Update extensions/zed/extension.toml before releasing."
+            exit 1
+          fi
+
+      - name: Check CHANGELOG.md Has Entry
+        run: |
+          SEMVER="${{ steps.derive.outputs.semver }}"
+          if ! grep -q "^# v$SEMVER\$" extensions/zed/CHANGELOG.md; then
+            echo "::error::No changelog entry found for v$SEMVER in extensions/zed/CHANGELOG.md. Add a '# v$SEMVER' section before releasing."
+            exit 1
+          fi
+
+      - name: Verify LSP Release Exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LSP_TAG="${{ steps.derive.outputs.lsp-tag }}"
+          if ! gh release view "$LSP_TAG" > /dev/null 2>&1; then
+            echo "::error::LSP release '$LSP_TAG' does not exist. Create an LSP release first by pushing a matching lsp-v* tag."
+            exit 1
+          fi
+          echo "LSP release '$LSP_TAG' found."
+
+  create-release:
+    name: Create Release
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Release Body
+        env:
+          TAG: ${{ github.ref_name }}
+          SEMVER: ${{ needs.preflight.outputs.semver }}
+        run: |
+          CHANGELOG=$(awk -v tag="v$SEMVER" '
+            BEGIN { found=0 }
+            /^# / {
+              if (found) exit
+              if ($0 == "# " tag) { found=1; next }
+            }
+            found { print }
+          ' extensions/zed/CHANGELOG.md | sed '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;ba}')
+
+          if [ -z "$CHANGELOG" ]; then
+            echo "::error::No changelog entry found for v$SEMVER in extensions/zed/CHANGELOG.md"
+            exit 1
+          fi
+
+          CHANGELOG=$(printf '%s' "$CHANGELOG" | sed 's/^#/##/')
+
+          cat > /tmp/release_body.md << EOF
+          # Changelog
+          ${CHANGELOG}
+
+          ---
+
+          # Zed Extensions
+          Install via the Zed Extensions registry — search for "RSML".
+          EOF
+
+      - name: Create or Update Draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists. Updating."
+            gh release edit "$TAG" --draft --title "RSML LSP $TAG" --notes-file /tmp/release_body.md
+          else
+            gh release create "$TAG" --draft --verify-tag --title "RSML LSP $TAG" --notes-file /tmp/release_body.md
+          fi
+
   build-zed:
     name: Build Zed Extension
+    needs: create-release
     runs-on: ubuntu-latest
     env:
       BIN: rsml-lsp-zed
@@ -51,13 +153,6 @@ jobs:
           mkdir -p staging/grammars
           cp extensions/zed/grammars/rsml.wasm staging/grammars/
 
-      - name: Get Semantic Version
-        shell: bash
-        env:
-          TAG_NAME: ${{ github.ref_name }}
-        run: |
-          echo "SEMVER=${TAG_NAME#zed-v}" >> "$GITHUB_ENV"
-
       - name: Generate Artifact Name
         shell: bash
         run: |
@@ -75,17 +170,19 @@ jobs:
           path: ${{ env.ARTIFACT_NAME }}
           name: ${{ env.ARTIFACT_NAME }}
 
-      - name: Create Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "${{ github.ref_name }}" > /dev/null 2>&1; then
-            echo "Release ${{ github.ref_name }} already exists. Skipping creation."
-          else
-            gh release create ${{ github.ref_name }} --verify-tag --title ${{ github.ref_name }}
-          fi
-
       - name: Add Artifact to Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload ${{ github.ref_name }} $ARTIFACT_NAME
+        run: gh release upload ${{ github.ref_name }} $ARTIFACT_NAME --clobber
+
+  publish-release:
+    name: Publish Release
+    needs: build-zed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Un-draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit ${{ github.ref_name }} --draft=false --repo ${{ github.repository }}

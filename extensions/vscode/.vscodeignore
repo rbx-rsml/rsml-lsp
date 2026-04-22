@@ -3,4 +3,7 @@ node_modules/**/*
 .gitignore
 tsconfig.json
 build.mjs
-/test
+test/**
+bun.lock
+lsp-version.txt
+changelog.md

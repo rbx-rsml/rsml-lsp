@@ -6,39 +6,114 @@ on:
 
 jobs:
   preflight:
-    name: Verify LSP Release
+    name: Preflight Checks
     runs-on: ubuntu-latest
     outputs:
-      lsp-tag: ${{ steps.read-version.outputs.tag }}
+      semver: ${{ steps.derive.outputs.semver }}
+      lsp-tag: ${{ steps.derive.outputs.lsp-tag }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read LSP Version
-        id: read-version
+      - name: Derive Versions
+        id: derive
+        env:
+          TAG_NAME: ${{ github.ref_name }}
         run: |
-          VERSION=$(tr -d '\n\r' < extensions/vscode/lsp-version.txt)
-          TAG="lsp-v${VERSION}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "LSP version: $VERSION (tag: $TAG)"
+          SEMVER="${TAG_NAME#vscode-v}"
+          LSP_VERSION=$(tr -d '\n\r' < extensions/vscode/lsp-version.txt)
+          LSP_TAG="lsp-v${LSP_VERSION}"
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "lsp-tag=$LSP_TAG" >> "$GITHUB_OUTPUT"
+          echo "Tag: $TAG_NAME → semver: $SEMVER, LSP tag: $LSP_TAG"
+
+      - name: Check package.json Version Matches Tag
+        run: |
+          SEMVER="${{ steps.derive.outputs.semver }}"
+          PKG_VERSION=$(node -p "require('./extensions/vscode/package.json').version")
+          if [ "$PKG_VERSION" != "$SEMVER" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match tag (vscode-v$SEMVER). Update extensions/vscode/package.json before releasing."
+            exit 1
+          fi
+
+      - name: Check CHANGELOG.md Has Entry
+        run: |
+          SEMVER="${{ steps.derive.outputs.semver }}"
+          if ! grep -q "^# v$SEMVER\$" extensions/vscode/CHANGELOG.md; then
+            echo "::error::No changelog entry found for v$SEMVER in extensions/vscode/CHANGELOG.md. Add a '# v$SEMVER' section before releasing."
+            exit 1
+          fi
 
       - name: Verify LSP Release Exists
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ steps.read-version.outputs.tag }}"
-          if ! gh release view "$TAG" > /dev/null 2>&1; then
-            echo "::error::LSP release '$TAG' does not exist. Create an LSP release first by pushing a matching lsp-v* tag."
+          LSP_TAG="${{ steps.derive.outputs.lsp-tag }}"
+          if ! gh release view "$LSP_TAG" > /dev/null 2>&1; then
+            echo "::error::LSP release '$LSP_TAG' does not exist. Create an LSP release first by pushing a matching lsp-v* tag."
             exit 1
           fi
-          echo "LSP release '$TAG' found."
+          echo "LSP release '$LSP_TAG' found."
+
+  create-release:
+    name: Create Release
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Release Body
+        env:
+          TAG: ${{ github.ref_name }}
+          SEMVER: ${{ needs.preflight.outputs.semver }}
+        run: |
+          CHANGELOG=$(awk -v tag="v$SEMVER" '
+            BEGIN { found=0 }
+            /^# / {
+              if (found) exit
+              if ($0 == "# " tag) { found=1; next }
+            }
+            found { print }
+          ' extensions/vscode/CHANGELOG.md | sed '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;ba}')
+
+          if [ -z "$CHANGELOG" ]; then
+            echo "::error::No changelog entry found for v$SEMVER in extensions/vscode/CHANGELOG.md"
+            exit 1
+          fi
+
+          CHANGELOG=$(printf '%s' "$CHANGELOG" | sed 's/^#/##/')
+
+          MARKETPLACE_URL="https://marketplace.visualstudio.com/items?itemName=rbx-rsml.roblox-style-management-language"
+
+          cat > /tmp/release_body.md << EOF
+          # Changelog
+          ${CHANGELOG}
+
+          ---
+
+          # Marketplace
+          Install via the [VS Code Marketplace](${MARKETPLACE_URL}).
+          EOF
+
+      - name: Create or Update Draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists. Updating."
+            gh release edit "$TAG" --draft --title "RSML LSP $TAG" --notes-file /tmp/release_body.md
+          else
+            gh release create "$TAG" --draft --verify-tag --title "RSML LSP $TAG" --notes-file /tmp/release_body.md
+          fi
 
   build-vscode:
     name: Build VS Code
-    needs: preflight
+    needs: create-release
     runs-on: ubuntu-latest
     env:
       BIN: rsml-lsp-vscode
-      LSP_TAG: ${{ needs.preflight.outputs.lsp-tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,20 +136,6 @@ jobs:
 
       - name: Install Dependencies
         run: cd extensions/vscode && bun install
-
-      - name: Get Semantic Version
-        shell: bash
-        env:
-          TAG_NAME: ${{ github.ref_name }}
-        run: |
-          echo "SEMVER=${TAG_NAME#vscode-v}" >> "$GITHUB_ENV"
-
-      - name: Update Version In package.json
-        run: |
-          cd extensions/vscode
-          if ! bun pm version ${{ env.SEMVER }}; then
-            echo "Version not changed"
-          fi
 
       - name: Transpile TS to JS
         run: cd extensions/vscode && bun run build --release
@@ -117,7 +178,7 @@ jobs:
       - name: Add Artifact To Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload ${{ github.ref_name }} $ARTIFACT_NAME
+        run: gh release upload ${{ github.ref_name }} $ARTIFACT_NAME --clobber
 
       - name: Install vsce
         run: bun install -g vsce
@@ -126,3 +187,15 @@ jobs:
         env:
           VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
         run: cd extensions/vscode && vsce publish --pat $VSCE_TOKEN
+
+  publish-release:
+    name: Publish Release
+    needs: build-vscode
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Un-draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit ${{ github.ref_name }} --draft=false --repo ${{ github.repository }}

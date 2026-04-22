@@ -9,19 +9,84 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  create-release:
-    name: Create Release
+  preflight:
+    name: Preflight Checks
     runs-on: ubuntu-latest
+    outputs:
+      semver: ${{ steps.derive.outputs.semver }}
     steps:
       - uses: actions/checkout@v4
-      - name: Create Release
+
+      - name: Derive Version
+        id: derive
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
         run: |
-          if gh release view "${{ github.ref_name }}" > /dev/null 2>&1; then
-            echo "Release ${{ github.ref_name }} already exists. Skipping creation."
+          SEMVER="${TAG_NAME#lsp-v}"
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "Tag: $TAG_NAME → semver: $SEMVER"
+
+      - name: Check Cargo.toml Version Matches Tag
+        run: |
+          SEMVER="${{ steps.derive.outputs.semver }}"
+          CARGO_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$CARGO_VERSION" != "$SEMVER" ]; then
+            echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag (lsp-v$SEMVER). Update Cargo.toml before releasing."
+            exit 1
+          fi
+
+      - name: Check CHANGELOG.md Has Entry
+        run: |
+          SEMVER="${{ steps.derive.outputs.semver }}"
+          if ! grep -q "^# v$SEMVER\$" CHANGELOG.md; then
+            echo "::error::No changelog entry found for v$SEMVER in CHANGELOG.md. Add a '# v$SEMVER' section before releasing."
+            exit 1
+          fi
+
+  create-release:
+    name: Create Release
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Release Body
+        env:
+          SEMVER: ${{ needs.preflight.outputs.semver }}
+        run: |
+          CHANGELOG=$(awk -v tag="v$SEMVER" '
+            BEGIN { found=0 }
+            /^# / {
+              if (found) exit
+              if ($0 == "# " tag) { found=1; next }
+            }
+            found { print }
+          ' CHANGELOG.md | sed '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;ba}')
+
+          if [ -z "$CHANGELOG" ]; then
+            echo "::error::No changelog entry found for v$SEMVER in CHANGELOG.md"
+            exit 1
+          fi
+
+          CHANGELOG=$(printf '%s' "$CHANGELOG" | sed 's/^#/##/')
+
+          cat > /tmp/release_body.md << EOF
+          # Changelog
+          ${CHANGELOG}
+          EOF
+
+      - name: Create or Update Draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists. Updating."
+            gh release edit "$TAG" --draft --title "$TAG" --notes-file /tmp/release_body.md
           else
-            gh release create ${{ github.ref_name }} --draft --verify-tag --title ${{ github.ref_name }}
+            gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes-file /tmp/release_body.md
           fi
 
   build:
@@ -135,10 +200,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           for archive in ./artifacts/**/*.tar.gz; do
-            gh release upload ${{ github.ref_name }} "$archive"
+            gh release upload ${{ github.ref_name }} "$archive" --clobber
           done
 
-      - name: Publish Release
+  publish-release:
+    name: Publish Release
+    needs: upload-to-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Un-draft Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit ${{ github.ref_name }} --draft=false
+        run: gh release edit ${{ github.ref_name }} --draft=false --repo ${{ github.repository }}
