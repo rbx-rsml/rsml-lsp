@@ -1,3 +1,7 @@
+# v0.3.2
+## Fixes
+- Fixed math operations between numbers not being typed as a number.
+
 # v0.3.1
 ## Fixes
 - Fixed arguments for @tween declaration.
