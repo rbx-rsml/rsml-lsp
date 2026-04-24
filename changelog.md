@@ -1,4 +1,4 @@
-# 0.3.1
+# v0.3.1
 ## Fixes
 - Fixed arguments for @tween declaration.
 - Fixed parser not registering semi-colon when assigning a macro call.
