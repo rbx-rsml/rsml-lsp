@@ -1,3 +1,9 @@
+# 0.3.1
+## Fixes
+- Fixed arguments for @tween declaration.
+- Fixed parser not registering semi-colon when assigning a macro call.
+- We no longer include the rbx-rsml compiler code in the lsp.
+
 # v0.3.0
 ## Changes
 - Added support for query selectors `@{ident}`.

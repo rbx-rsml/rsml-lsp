@@ -1,10 +1,17 @@
 [package]
 name = "rsml-lsp"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 
 [dependencies]
-rbx-rsml = "1.0.1"
+# rbx-rsml = "1.0.1"
+# rbx_reflection = "6.1.0"
+# rbx_reflection_database = "2.0.2"
+# rbx_types = "3.1.0"
+rbx-rsml = { git = "https://github.com/rbx-rsml/rsml-rust.git", features = ["typechecker"] }
+rbx_reflection = { git = "https://github.com/cameronpcampbell/rbx-dom.git" }
+rbx_reflection_database = { git = "https://github.com/cameronpcampbell/rbx-dom.git" }
+rbx_types = { git = "https://github.com/cameronpcampbell/rbx-dom.git" }
 tower-lsp = "0.20.0"
 tokio = { version = "1.47.1", features = ["full"] }
 serde = "1.0.219"
@@ -16,6 +23,3 @@ rangemap = "1.6.0"
 indexmap = "2"
 phf = "0.13.1"
 phf_macros = "0.13.1"
-rbx_reflection = "6.1.0"
-rbx_reflection_database = "2.0.2"
-rbx_types = "3.1.0"

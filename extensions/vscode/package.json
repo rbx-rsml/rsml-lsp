@@ -4,7 +4,7 @@
     "publisher": "rbx-rsml",
     "description": "LSP and syntax highlighter for RSML (Roblox Style Management Language).",
     "icon": "icon.png",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "engines": {
         "vscode": "^1.94.0"
     },
@@ -21,12 +21,17 @@
         "languages": [
             {
                 "id": "rsml",
-                "aliases": ["RSML", "rsml"],
+                "aliases": [
+                    "RSML",
+                    "rsml"
+                ],
                 "icon": {
                     "light": "icon.png",
                     "dark": "icon.png"
                 },
-                "extensions": [".rsml"],
+                "extensions": [
+                    ".rsml"
+                ],
                 "configuration": "./language-configuration.json"
             }
         ],
@@ -39,7 +44,9 @@
             {
                 "path": "./syntaxes/rsml-luau.tmLanguage.json",
                 "scopeName": "rsml.luau",
-                "injectTo": ["source.luau"],
+                "injectTo": [
+                    "source.luau"
+                ],
                 "embeddedLanguages": {
                     "meta.embedded.rsml": "rsml"
                 }
@@ -47,7 +54,9 @@
             {
                 "path": "./syntaxes/rsml-ts.tmLanguage.json",
                 "scopeName": "rsml.ts",
-                "injectTo": ["source.ts"],
+                "injectTo": [
+                    "source.ts"
+                ],
                 "embeddedLanguages": {
                     "meta.embedded.rsml": "rsml"
                 }
@@ -56,7 +65,9 @@
         "semanticTokenScopes": [
             {
                 "scopes": {
-                    "templateType": ["entity.name.selector"]
+                    "templateType": [
+                        "entity.name.selector"
+                    ]
                 }
             }
         ],
