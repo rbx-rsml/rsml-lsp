@@ -4,7 +4,7 @@
     "publisher": "rbx-rsml",
     "description": "LSP and syntax highlighter for RSML (Roblox Style Management Language).",
     "icon": "icon.png",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "engines": {
         "vscode": "^1.94.0"
     },
